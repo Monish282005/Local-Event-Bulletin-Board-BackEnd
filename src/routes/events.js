@@ -6,6 +6,7 @@ const { optionalAuthenticate } = require('../middleware/auth');
 const { isValidLocationCombo } = require('../utils/locationData');
 const { uploadToCloudinary } = require('../utils/cloudinary');
 const { razorpayInstance, verifyRazorpaySignature, key_id } = require('../utils/razorpay');
+const { sendInvoiceEmail } = require('../utils/emailService');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -795,6 +796,29 @@ router.post('/:id/verify-razorpay-payment', authenticate, async (req, res) => {
       include: { creator: { select: { id: true, name: true, email: true } } },
     });
 
+    // Asynchronously dispatch invoice email to customer
+    if (dbUser?.email) {
+      sendInvoiceEmail({
+        userName: dbUser.name || 'Valued Customer',
+        userEmail: dbUser.email,
+        eventTitle: existingEvent.title,
+        eventDate: existingEvent.event_datetime ? new Date(existingEvent.event_datetime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A',
+        location: existingEvent.location,
+        neighborhood: existingEvent.neighborhood,
+        city: existingEvent.city,
+        state: existingEvent.state,
+        organizerName: existingEvent.creator?.name || 'Event Organizer',
+        organizerEmail: existingEvent.creator?.email || 'contact@localevent.com',
+        ticketNumbers: issuedTickets,
+        quantity: requestedQty,
+        ticketPrice: existingEvent.ticket_price || 0,
+        totalAmountPaid: totalPaid,
+        paymentId: paymentIdStr,
+        orderId: orderIdStr,
+        bookedAt: new Date().toISOString(),
+      }).catch((e) => console.error('[EmailService] Async email dispatch error:', e.message));
+    }
+
     return res.status(200).json({
       message: 'Payment verified and booking confirmed! 🎉',
       event: updatedEvent,
@@ -878,6 +902,33 @@ router.post('/:id/rsvp', authenticate, async (req, res) => {
         creator: { select: { id: true, name: true, email: true } },
       },
     });
+
+    // Asynchronously dispatch invoice email to customer for free RSVP
+    if (req.user && req.user.id) {
+      prisma.user.findUnique({ where: { id: req.user.id } }).then((dbUser) => {
+        if (dbUser?.email) {
+          sendInvoiceEmail({
+            userName: dbUser.name || 'Valued Customer',
+            userEmail: dbUser.email,
+            eventTitle: existingEvent.title,
+            eventDate: existingEvent.event_datetime ? new Date(existingEvent.event_datetime).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'N/A',
+            location: existingEvent.location,
+            neighborhood: existingEvent.neighborhood,
+            city: existingEvent.city,
+            state: existingEvent.state,
+            organizerName: existingEvent.creator?.name || 'Event Organizer',
+            organizerEmail: existingEvent.creator?.email || 'contact@localevent.com',
+            ticketNumbers: issuedTickets,
+            quantity: requestedQty,
+            ticketPrice: existingEvent.ticket_price || 0,
+            totalAmountPaid: (existingEvent.ticket_price || 0) * requestedQty,
+            paymentId: `FREE_RSVP_${Date.now()}`,
+            orderId: `ORD_FREE_${Date.now()}`,
+            bookedAt: new Date().toISOString(),
+          }).catch((e) => console.error('[EmailService] Async email dispatch error:', e.message));
+        }
+      }).catch((err) => console.error('[EmailService] Error fetching user for email:', err.message));
+    }
 
     return res.status(200).json({
       ...updatedEvent,
