@@ -123,6 +123,8 @@ router.post('/', authenticate, async (req, res) => {
     const totalTicketsNum = Math.max(1, parseInt(req.body.total_tickets, 10) || 50);
     const ticketPriceNum = Math.max(0, parseFloat(req.body.ticket_price) || 0);
     const allowCancellationBool = req.body.allow_cancellation !== undefined ? Boolean(req.body.allow_cancellation) : true;
+    const latitudeNum = req.body.latitude !== undefined && req.body.latitude !== null ? parseFloat(req.body.latitude) : null;
+    const longitudeNum = req.body.longitude !== undefined && req.body.longitude !== null ? parseFloat(req.body.longitude) : null;
     let imageUrlStr = req.body.image_url && typeof req.body.image_url === 'string' && req.body.image_url.trim() ? req.body.image_url.trim() : null;
 
     if (imageUrlStr) {
@@ -152,6 +154,8 @@ router.post('/', authenticate, async (req, res) => {
         total_tickets: totalTicketsNum,
         ticket_price: ticketPriceNum,
         allow_cancellation: allowCancellationBool,
+        latitude: latitudeNum,
+        longitude: longitudeNum,
         image_url: imageUrlStr,
         created_by: req.user.id,
       },

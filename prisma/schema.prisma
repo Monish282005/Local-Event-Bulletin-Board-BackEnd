@@ -58,6 +58,8 @@ model Event {
   is_expired         Boolean             @default(false)
   allow_cancellation Boolean             @default(true)
   created_by         String?             @db.Char(36)
+  latitude           Float?
+  longitude          Float?
   created_at         DateTime            @default(now())
   deleted_at         DateTime?           @db.DateTime
 
