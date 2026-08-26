@@ -4,6 +4,8 @@ const { PrismaClient } = require('@prisma/client');
 const authenticate = require('../middleware/auth');
 const { optionalAuthenticate } = require('../middleware/auth');
 const { isValidLocationCombo } = require('../utils/locationData');
+const { uploadToCloudinary } = require('../utils/cloudinary');
+const { razorpayInstance, verifyRazorpaySignature, key_id } = require('../utils/razorpay');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -118,8 +120,20 @@ router.post('/', authenticate, async (req, res) => {
     }
 
     const totalTicketsNum = Math.max(1, parseInt(req.body.total_tickets, 10) || 50);
+    const ticketPriceNum = Math.max(0, parseFloat(req.body.ticket_price) || 0);
     const allowCancellationBool = req.body.allow_cancellation !== undefined ? Boolean(req.body.allow_cancellation) : true;
-    const imageUrlStr = req.body.image_url && typeof req.body.image_url === 'string' && req.body.image_url.trim() ? req.body.image_url.trim() : null;
+    let imageUrlStr = req.body.image_url && typeof req.body.image_url === 'string' && req.body.image_url.trim() ? req.body.image_url.trim() : null;
+
+    if (imageUrlStr) {
+      try {
+        const cloudinaryUrl = await uploadToCloudinary(imageUrlStr);
+        if (cloudinaryUrl) {
+          imageUrlStr = cloudinaryUrl;
+        }
+      } catch (err) {
+        console.warn('Cloudinary upload warning:', err);
+      }
+    }
 
     const newEvent = await prisma.event.create({
       data: {
@@ -135,6 +149,7 @@ router.post('/', authenticate, async (req, res) => {
         city: city.trim(),
         event_datetime: new Date(event_datetime),
         total_tickets: totalTicketsNum,
+        ticket_price: ticketPriceNum,
         allow_cancellation: allowCancellationBool,
         image_url: imageUrlStr,
         created_by: req.user.id,
@@ -239,12 +254,19 @@ router.get('/my-bookings', authenticate, async (req, res) => {
           total_user_tickets: 0,
           ticket_numbers: [],
           booked_at: reg.created_at,
+          payment_id: reg.payment_id || null,
+          order_id: reg.order_id || null,
+          amount_paid: reg.amount_paid || 0,
+          total_amount_paid: 0,
         });
       }
 
       const item = groupedMap.get(eventId);
       item.total_user_tickets += 1;
       item.ticket_numbers.push(reg.ticket_number);
+      item.total_amount_paid += (reg.amount_paid || (reg.event.ticket_price || 0));
+      if (!item.payment_id && reg.payment_id) item.payment_id = reg.payment_id;
+      if (!item.order_id && reg.order_id) item.order_id = reg.order_id;
     }
 
     const { page, limit } = req.query;
@@ -638,6 +660,157 @@ router.post('/:id/interested', authenticate, async (req, res) => {
   }
 });
 
+// POST /api/events/:id/create-razorpay-order (Create Razorpay Order for Paid Events)
+router.post('/:id/create-razorpay-order', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const requestedQty = Math.max(1, parseInt(req.body.ticket_quantity || req.body.quantity, 10) || 1);
+
+    const existingEvent = await prisma.event.findFirst({
+      where: { id, deleted_at: null },
+    });
+
+    if (!existingEvent || existingEvent.is_expired) {
+      return res.status(404).json({ error: 'Event not found or expired.' });
+    }
+
+    const remainingTickets = Math.max(0, existingEvent.total_tickets - existingEvent.rsvp_count);
+    if (remainingTickets <= 0) {
+      return res.status(400).json({ error: 'Event is sold out. No more tickets available.' });
+    }
+
+    if (requestedQty > remainingTickets) {
+      return res.status(400).json({ error: `Only ${remainingTickets} ticket(s) remaining for this event.` });
+    }
+
+    const ticketPrice = existingEvent.ticket_price || 0;
+    const totalAmount = ticketPrice * requestedQty;
+
+    if (totalAmount <= 0) {
+      return res.status(200).json({
+        is_free: true,
+        total_amount: 0,
+        message: 'This is a free event. No payment required.',
+      });
+    }
+
+    const options = {
+      amount: Math.round(totalAmount * 100), // amount in paise
+      currency: 'INR',
+      receipt: `rcpt_${id.slice(0, 8)}_${Date.now()}`,
+      notes: {
+        event_id: id,
+        user_id: req.user.id,
+        quantity: requestedQty,
+      },
+    };
+
+    const order = await razorpayInstance.orders.create(options);
+
+    return res.status(200).json({
+      is_free: false,
+      order_id: order.id,
+      amount: order.amount,
+      currency: order.currency,
+      key_id,
+      ticket_price: ticketPrice,
+      ticket_quantity: requestedQty,
+      total_amount: totalAmount,
+    });
+  } catch (error) {
+    console.error('Error creating Razorpay order:', error);
+    return res.status(500).json({ error: 'Failed to create payment order.' });
+  }
+});
+
+// POST /api/events/:id/verify-razorpay-payment (Verify Razorpay Payment & Complete Registration)
+router.post('/:id/verify-razorpay-payment', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      ticket_quantity,
+    } = req.body;
+
+    const requestedQty = Math.max(1, parseInt(ticket_quantity || req.body.quantity, 10) || 1);
+
+    const existingEvent = await prisma.event.findFirst({
+      where: { id, deleted_at: null },
+      include: { creator: { select: { id: true, name: true, email: true } } },
+    });
+
+    if (!existingEvent || existingEvent.is_expired) {
+      return res.status(404).json({ error: 'Event not found or expired.' });
+    }
+
+    const remainingTickets = Math.max(0, existingEvent.total_tickets - existingEvent.rsvp_count);
+    if (requestedQty > remainingTickets) {
+      return res.status(400).json({ error: `Only ${remainingTickets} ticket(s) remaining for this event.` });
+    }
+
+    // Verify signature for paid events
+    if (existingEvent.ticket_price > 0) {
+      if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+        return res.status(400).json({ error: 'Payment parameters missing for verification.' });
+      }
+
+      const isValid = verifyRazorpaySignature(razorpay_order_id, razorpay_payment_id, razorpay_signature);
+      if (!isValid) {
+        return res.status(400).json({ error: 'Payment verification failed. Signature mismatch.' });
+      }
+    }
+
+    const dbUser = await prisma.user.findUnique({ where: { id: req.user.id } });
+    const totalPaid = (existingEvent.ticket_price || 0) * requestedQty;
+    const paymentIdStr = razorpay_payment_id || `FREE_${Date.now()}`;
+    const orderIdStr = razorpay_order_id || `ORD_FREE_${Date.now()}`;
+    const issuedTickets = [];
+
+    for (let i = 0; i < requestedQty; i++) {
+      const ticketNumber = existingEvent.rsvp_count + i + 1;
+      const reg = await prisma.eventRegistration.create({
+        data: {
+          id: uuidv4(),
+          event_id: id,
+          user_id: req.user.id,
+          user_name: dbUser?.name || 'Registered User',
+          user_email: dbUser?.email || 'user@example.com',
+          user_phone: dbUser?.phone || (req.body.phone && typeof req.body.phone === 'string' ? req.body.phone.trim() : null),
+          ticket_number: ticketNumber,
+          payment_id: paymentIdStr,
+          order_id: orderIdStr,
+          amount_paid: existingEvent.ticket_price || 0,
+        },
+      });
+      issuedTickets.push(reg.ticket_number);
+    }
+
+    const updatedEvent = await prisma.event.update({
+      where: { id },
+      data: {
+        rsvp_count: { increment: requestedQty },
+      },
+      include: { creator: { select: { id: true, name: true, email: true } } },
+    });
+
+    return res.status(200).json({
+      message: 'Payment verified and booking confirmed! 🎉',
+      event: updatedEvent,
+      ticket_numbers: issuedTickets,
+      quantity_registered: requestedQty,
+      payment_id: paymentIdStr,
+      order_id: orderIdStr,
+      total_amount_paid: totalPaid,
+      booked_at: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error verifying Razorpay payment:', error);
+    return res.status(500).json({ error: 'Internal server error verifying payment.' });
+  }
+});
+
 // POST /api/events/:id/rsvp (Atomic RSVP Counter & Registration Record - Auth required)
 router.post('/:id/rsvp', authenticate, async (req, res) => {
   try {
@@ -968,6 +1141,15 @@ router.put('/:id', authenticate, async (req, res) => {
         return res.status(400).json({ error: 'event_datetime must be a valid future timestamp.' });
       }
       updateData.event_datetime = new Date(event_datetime);
+    }
+
+    if (req.body.image_url !== undefined) {
+      if (req.body.image_url && typeof req.body.image_url === 'string' && req.body.image_url.trim()) {
+        const cloudinaryUrl = await uploadToCloudinary(req.body.image_url.trim());
+        updateData.image_url = cloudinaryUrl || req.body.image_url.trim();
+      } else {
+        updateData.image_url = null;
+      }
     }
 
     const updatedEvent = await prisma.event.update({

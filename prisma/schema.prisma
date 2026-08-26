@@ -51,9 +51,10 @@ model Event {
   city               String              @default("Bengaluru") @db.VarChar(80)
   event_datetime     DateTime            @db.DateTime
   total_tickets      Int                 @default(50) @db.UnsignedInt
+  ticket_price       Float               @default(0)
   rsvp_count         Int                 @default(0) @db.UnsignedInt
   interested_count   Int                 @default(0) @db.UnsignedInt
-  image_url          String?             @db.Text
+  image_url          String?             @db.LongText
   is_expired         Boolean             @default(false)
   allow_cancellation Boolean             @default(true)
   created_by         String?             @db.Char(36)
@@ -81,6 +82,9 @@ model EventRegistration {
   user_email    String    @db.VarChar(150)
   user_phone    String?   @db.VarChar(20)
   ticket_number Int       @db.UnsignedInt
+  payment_id    String?   @db.VarChar(100)
+  order_id      String?   @db.VarChar(100)
+  amount_paid   Float     @default(0)
   created_at    DateTime  @default(now())
   deleted_at    DateTime? @db.DateTime
 
