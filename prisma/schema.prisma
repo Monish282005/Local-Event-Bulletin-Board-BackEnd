@@ -1,0 +1,85 @@
+// Prisma schema for Local Event Bulletin Board
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum EventCategory {
+  sports
+  music
+  food
+  yard_sale
+  other
+}
+
+model User {
+  id            String              @id @db.Char(36)
+  name          String              @db.VarChar(80)
+  email         String              @unique @db.VarChar(150)
+  password_hash String              @db.VarChar(255)
+  country       String              @default("India") @db.VarChar(80)
+  state         String              @default("Karnataka") @db.VarChar(80)
+  district      String              @default("Bengaluru Urban") @db.VarChar(80)
+  city          String              @default("Bengaluru") @db.VarChar(80)
+  created_at    DateTime            @default(now())
+
+  events        Event[]             @relation("UserEvents")
+  registrations EventRegistration[] @relation("UserRegistrations")
+
+  @@index([state])
+  @@index([city])
+  @@map("users")
+}
+
+model Event {
+  id             String              @id @db.Char(36)
+  title          String              @db.VarChar(120)
+  description    String              @db.Text
+  category       EventCategory
+  location       String              @db.VarChar(150)
+  neighborhood   String              @db.VarChar(80)
+  country        String              @default("India") @db.VarChar(80)
+  state          String              @default("Karnataka") @db.VarChar(80)
+  district       String              @default("Bengaluru Urban") @db.VarChar(80)
+  city           String              @default("Bengaluru") @db.VarChar(80)
+  event_datetime DateTime            @db.DateTime
+  total_tickets  Int                 @default(50) @db.UnsignedInt
+  rsvp_count     Int                 @default(0) @db.UnsignedInt
+  is_expired     Boolean             @default(false)
+  allow_cancellation Boolean           @default(true)
+  created_by         String?           @db.Char(36)
+  created_at         DateTime          @default(now())
+
+  creator        User?               @relation("UserEvents", fields: [created_by], references: [id], onDelete: SetNull)
+  registrations  EventRegistration[] @relation("EventRegistrations")
+
+  @@index([event_datetime])
+  @@index([neighborhood])
+  @@index([category])
+  @@index([state])
+  @@index([city])
+  @@index([country, state, city])
+  @@map("events")
+}
+
+model EventRegistration {
+  id            String   @id @db.Char(36)
+  event_id      String   @db.Char(36)
+  user_id       String?  @db.Char(36)
+  user_name     String   @db.VarChar(80)
+  user_email    String   @db.VarChar(150)
+  ticket_number Int      @db.UnsignedInt
+  created_at    DateTime @default(now())
+
+  event         Event    @relation("EventRegistrations", fields: [event_id], references: [id], onDelete: Cascade)
+  user          User?    @relation("UserRegistrations", fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([event_id, user_id])
+  @@index([event_id])
+  @@map("event_registrations")
+}
