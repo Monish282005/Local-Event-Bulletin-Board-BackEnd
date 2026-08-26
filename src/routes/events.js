@@ -5,17 +5,62 @@ const authenticate = require('../middleware/auth');
 const { optionalAuthenticate } = require('../middleware/auth');
 const { isValidLocationCombo } = require('../utils/locationData');
 
-
 const router = express.Router();
 const prisma = new PrismaClient();
 
 const VALID_CATEGORIES = ['sports', 'music', 'food', 'yard_sale', 'other'];
 
-// Helper to validate date string and ensure it's in the future
-function isValidFutureDate(dateString) {
-  const date = new Date(dateString);
-  if (isNaN(date.getTime())) return false;
-  return date.getTime() > Date.now();
+function isValidFutureDate(dateStr) {
+  const d = new Date(dateStr);
+  return !isNaN(d.getTime()) && d.getTime() > Date.now();
+}
+
+function getDateFilterClause(datePreset, startDateStr, endDateStr) {
+  const now = new Date();
+
+  if (datePreset === 'today') {
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return { gte: startOfToday, lte: endOfToday };
+  }
+
+  if (datePreset === 'tomorrow') {
+    const startOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+    const endOfTomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 23, 59, 59, 999);
+    return { gte: startOfTomorrow, lte: endOfTomorrow };
+  }
+
+  if (datePreset === 'this_weekend') {
+    const dayOfWeek = now.getDay();
+    const daysUntilSaturday = (6 - dayOfWeek + 7) % 7;
+    const startOfSaturday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilSaturday, 0, 0, 0, 0);
+    const endOfSunday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + daysUntilSaturday + 1, 23, 59, 59, 999);
+    return { gte: startOfSaturday, lte: endOfSunday };
+  }
+
+  if (datePreset === 'this_week') {
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const endOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7, 23, 59, 59, 999);
+    return { gte: startOfToday, lte: endOfWeek };
+  }
+
+  if (datePreset === 'custom' || startDateStr || endDateStr) {
+    const clause = {};
+    if (startDateStr) {
+      const s = new Date(startDateStr);
+      if (!isNaN(s.getTime())) clause.gte = s;
+    }
+    if (endDateStr) {
+      const e = new Date(endDateStr);
+      if (!isNaN(e.getTime())) {
+        e.setHours(23, 59, 59, 999);
+        clause.lte = e;
+      }
+    }
+    if (Object.keys(clause).length > 0) return clause;
+  }
+
+  return null;
 }
 
 // POST /api/events (Create Event - Auth required)
@@ -34,14 +79,12 @@ router.post('/', authenticate, async (req, res) => {
       city,
     } = req.body;
 
-    // Required base fields check
     if (!title || !description || !category || !location || !neighborhood || !event_datetime) {
       return res.status(400).json({
-        error: 'Missing required fields. title, description, category, location, neighborhood, and event_datetime are required.'
+        error: 'Missing required event fields (title, description, category, location, neighborhood, event_datetime).'
       });
     }
 
-    // Required structured location fields check
     if (
       !country || typeof country !== 'string' || !country.trim() ||
       !state || typeof state !== 'string' || !state.trim() ||
@@ -76,6 +119,7 @@ router.post('/', authenticate, async (req, res) => {
 
     const totalTicketsNum = Math.max(1, parseInt(req.body.total_tickets, 10) || 50);
     const allowCancellationBool = req.body.allow_cancellation !== undefined ? Boolean(req.body.allow_cancellation) : true;
+    const imageUrlStr = req.body.image_url && typeof req.body.image_url === 'string' && req.body.image_url.trim() ? req.body.image_url.trim() : null;
 
     const newEvent = await prisma.event.create({
       data: {
@@ -92,6 +136,7 @@ router.post('/', authenticate, async (req, res) => {
         event_datetime: new Date(event_datetime),
         total_tickets: totalTicketsNum,
         allow_cancellation: allowCancellationBool,
+        image_url: imageUrlStr,
         created_by: req.user.id,
       },
       include: {
@@ -107,7 +152,7 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 
-// GET /api/events/my-events (List events created by logged-in user - Auth required)
+// GET /api/events/my-events (List active non-soft-deleted events created by logged-in user - Auth required)
 router.get('/my-events', authenticate, async (req, res) => {
   try {
     const { page, limit } = req.query;
@@ -115,6 +160,7 @@ router.get('/my-events', authenticate, async (req, res) => {
     const whereClause = {
       created_by: req.user.id,
       is_expired: false,
+      deleted_at: null,
     };
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -151,12 +197,16 @@ router.get('/my-events', authenticate, async (req, res) => {
 });
 
 
-// GET /api/events/my-bookings (List event registrations for logged-in user - Auth required)
+// GET /api/events/my-bookings (List non-soft-deleted event registrations for logged-in user - Auth required)
 router.get('/my-bookings', authenticate, async (req, res) => {
   try {
     const registrations = await prisma.eventRegistration.findMany({
       where: {
         user_id: req.user.id,
+        deleted_at: null,
+        event: {
+          deleted_at: null,
+        },
       },
       include: {
         event: {
@@ -180,7 +230,7 @@ router.get('/my-bookings', authenticate, async (req, res) => {
     const groupedMap = new Map();
 
     for (const reg of registrations) {
-      if (!reg.event || reg.event.is_expired) continue;
+      if (!reg.event || reg.event.is_expired || reg.event.deleted_at !== null) continue;
 
       const eventId = reg.event.id;
       if (!groupedMap.has(eventId)) {
@@ -228,16 +278,30 @@ router.get('/my-bookings', authenticate, async (req, res) => {
 });
 
 
-// GET /api/events (List non-expired events - Public for search & filter)
+// GET /api/events (List non-expired, active non-soft-deleted events - Public for search & filter)
 router.get('/', async (req, res) => {
   try {
-    const { neighborhood, category, page, limit, paginate } = req.query;
+    const {
+      neighborhood,
+      category,
+      search,
+      query,
+      q,
+      datePreset,
+      startDate,
+      endDate,
+      sort,
+      page,
+      limit,
+      paginate,
+    } = req.query;
 
     const whereClause = {
       is_expired: false,
+      deleted_at: null,
     };
 
-    const searchParam = req.query.neighborhood || req.query.search || req.query.query;
+    const searchParam = neighborhood || search || query || q;
     if (searchParam && typeof searchParam === 'string' && searchParam.trim()) {
       const searchTerm = searchParam.trim();
       whereClause.OR = [
@@ -247,10 +311,11 @@ router.get('/', async (req, res) => {
         { state: { contains: searchTerm } },
         { title: { contains: searchTerm } },
         { location: { contains: searchTerm } },
+        { description: { contains: searchTerm } },
       ];
     }
 
-    if (category && typeof category === 'string' && category.trim()) {
+    if (category && typeof category === 'string' && category.trim() && category.trim() !== 'all') {
       if (VALID_CATEGORIES.includes(category.trim())) {
         whereClause.category = category.trim();
       } else {
@@ -264,6 +329,16 @@ router.get('/', async (req, res) => {
       }
     }
 
+    const dateClause = getDateFilterClause(datePreset, startDate, endDate);
+    if (dateClause) {
+      whereClause.event_datetime = dateClause;
+    }
+
+    let orderBy = { event_datetime: 'asc' };
+    if (sort === 'datetime_desc') orderBy = { event_datetime: 'desc' };
+    else if (sort === 'created_desc') orderBy = { created_at: 'desc' };
+    else if (sort === 'popularity_desc') orderBy = { rsvp_count: 'desc' };
+
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10) || 9));
     const skip = (pageNum - 1) * limitNum;
@@ -273,9 +348,7 @@ router.get('/', async (req, res) => {
     const events = await prisma.event.findMany({
       where: whereClause,
       include: { creator: { select: { id: true, name: true, email: true } } },
-      orderBy: {
-        event_datetime: 'asc',
-      },
+      orderBy,
       skip,
       take: limitNum,
     });
@@ -294,7 +367,6 @@ router.get('/', async (req, res) => {
       return res.status(200).json({ events, pagination });
     }
 
-    // Default array return with pagination header for backward compatibility
     res.setHeader('X-Total-Count', total);
     return res.status(200).json(events);
   } catch (error) {
@@ -321,21 +393,95 @@ router.get('/feed', optionalAuthenticate, async (req, res) => {
         userCity = dbUser.city;
         isUserLoggedIn = true;
       }
-    } else {
-      if (req.query.country && typeof req.query.country === 'string') userCountry = req.query.country.trim();
-      if (req.query.state && typeof req.query.state === 'string') userState = req.query.state.trim();
-      if (req.query.city && typeof req.query.city === 'string') userCity = req.query.city.trim();
     }
 
-    const { category, topPicksPage, statePage, countryPage, limit } = req.query;
+    if (req.query.city && typeof req.query.city === 'string' && req.query.city.trim()) {
+      userCity = req.query.city.trim();
+      const cityLower = userCity.toLowerCase();
+
+      const cityStateMap = {
+        'bengaluru': { state: 'Karnataka', country: 'India' },
+        'bangalore': { state: 'Karnataka', country: 'India' },
+        'coimbatore': { state: 'Tamil Nadu', country: 'India' },
+        'chennai': { state: 'Tamil Nadu', country: 'India' },
+        'mumbai': { state: 'Maharashtra', country: 'India' },
+        'pune': { state: 'Maharashtra', country: 'India' },
+        'delhi': { state: 'Delhi', country: 'India' },
+        'delhi ncr': { state: 'Delhi', country: 'India' },
+        'hyderabad': { state: 'Telangana', country: 'India' },
+        'kolkata': { state: 'West Bengal', country: 'India' },
+        'ahmedabad': { state: 'Gujarat', country: 'India' },
+        'kochi': { state: 'Kerala', country: 'India' },
+        'mysuru': { state: 'Karnataka', country: 'India' },
+        'chandigarh': { state: 'Punjab', country: 'India' },
+      };
+
+      if (cityStateMap[cityLower]) {
+        userState = cityStateMap[cityLower].state;
+        userCountry = cityStateMap[cityLower].country;
+      } else {
+        const cityEvent = await prisma.event.findFirst({
+          where: { city: { contains: userCity }, deleted_at: null },
+          select: { state: true, country: true },
+        });
+        if (cityEvent) {
+          if (cityEvent.state) userState = cityEvent.state;
+          if (cityEvent.country) userCountry = cityEvent.country;
+        }
+      }
+    }
+    if (req.query.state && typeof req.query.state === 'string' && req.query.state.trim()) {
+      userState = req.query.state.trim();
+    }
+    if (req.query.country && typeof req.query.country === 'string' && req.query.country.trim()) {
+      userCountry = req.query.country.trim();
+    }
+
+    const {
+      category,
+      search,
+      query,
+      q,
+      datePreset,
+      startDate,
+      endDate,
+      sort,
+      topPicksPage,
+      statePage,
+      countryPage,
+      limit,
+    } = req.query;
+
     const categoryFilter = (category && typeof category === 'string' && VALID_CATEGORIES.includes(category.trim()))
       ? category.trim()
       : null;
 
+    const dateClause = getDateFilterClause(datePreset, startDate, endDate);
+
     const baseWhere = {
       is_expired: false,
+      deleted_at: null,
       ...(categoryFilter ? { category: categoryFilter } : {}),
+      ...(dateClause ? { event_datetime: dateClause } : {}),
     };
+
+    const searchParam = search || query || q;
+    if (searchParam && typeof searchParam === 'string' && searchParam.trim()) {
+      const searchTerm = searchParam.trim();
+      baseWhere.OR = [
+        { title: { contains: searchTerm } },
+        { description: { contains: searchTerm } },
+        { location: { contains: searchTerm } },
+        { neighborhood: { contains: searchTerm } },
+        { city: { contains: searchTerm } },
+        { state: { contains: searchTerm } },
+      ];
+    }
+
+    let orderBy = { event_datetime: 'asc' };
+    if (sort === 'datetime_desc') orderBy = { event_datetime: 'desc' };
+    else if (sort === 'created_desc') orderBy = { created_at: 'desc' };
+    else if (sort === 'popularity_desc') orderBy = { rsvp_count: 'desc' };
 
     const limitNum = req.query.limit ? Math.min(50, Math.max(1, parseInt(limit, 10) || 6)) : 500;
 
@@ -343,18 +489,16 @@ router.get('/feed', optionalAuthenticate, async (req, res) => {
     const stPage = Math.max(1, parseInt(statePage, 10) || 1);
     const coPage = Math.max(1, parseInt(countryPage, 10) || 1);
 
-    // Tier 1: Top Picks (Same City, State, Country)
+    // Tier 1: Top Picks (Same City)
     const tpWhere = {
       ...baseWhere,
-      country: userCountry,
-      state: userState,
-      city: userCity,
+      city: { contains: userCity },
     };
     const tpTotal = await prisma.event.count({ where: tpWhere });
     const topPicks = await prisma.event.findMany({
       where: tpWhere,
       include: { creator: { select: { id: true, name: true, email: true } } },
-      orderBy: { event_datetime: 'asc' },
+      orderBy,
       skip: (tpPage - 1) * limitNum,
       take: limitNum,
     });
@@ -370,7 +514,7 @@ router.get('/feed', optionalAuthenticate, async (req, res) => {
     const stateEvents = await prisma.event.findMany({
       where: stWhere,
       include: { creator: { select: { id: true, name: true, email: true } } },
-      orderBy: { event_datetime: 'asc' },
+      orderBy,
       skip: (stPage - 1) * limitNum,
       take: limitNum,
     });
@@ -385,7 +529,7 @@ router.get('/feed', optionalAuthenticate, async (req, res) => {
     const countryEvents = await prisma.event.findMany({
       where: coWhere,
       include: { creator: { select: { id: true, name: true, email: true } } },
-      orderBy: { event_datetime: 'asc' },
+      orderBy,
       skip: (coPage - 1) * limitNum,
       take: limitNum,
     });
@@ -434,13 +578,13 @@ router.get('/feed', optionalAuthenticate, async (req, res) => {
 });
 
 
-// GET /api/events/:id (Get single non-expired event - Public)
+// GET /api/events/:id (Get single active non-soft-deleted event - Public)
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const event = await prisma.event.findUnique({
-      where: { id },
+    const event = await prisma.event.findFirst({
+      where: { id, deleted_at: null },
       include: { creator: { select: { id: true, name: true, email: true } } },
     });
 
@@ -455,6 +599,45 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+// POST /api/events/:id/interested (Toggle "I'm Going" interest count - Auth required)
+router.post('/:id/interested', authenticate, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action } = req.body;
+
+    const existingEvent = await prisma.event.findFirst({
+      where: { id, deleted_at: null },
+    });
+
+    if (!existingEvent || existingEvent.is_expired) {
+      return res.status(404).json({ error: 'Event not found or has expired.' });
+    }
+
+    let updatedCount = existingEvent.interested_count || 0;
+    if (action === 'remove') {
+      updatedCount = Math.max(0, updatedCount - 1);
+    } else {
+      updatedCount = updatedCount + 1;
+    }
+
+    const updatedEvent = await prisma.event.update({
+      where: { id },
+      data: {
+        interested_count: updatedCount,
+      },
+    });
+
+    return res.status(200).json({
+      message: action === 'remove' ? 'Interest removed' : 'Interest recorded! 🙌',
+      interested_count: updatedEvent.interested_count,
+      is_interested: action !== 'remove',
+    });
+  } catch (error) {
+    console.error('Error toggling interest:', error);
+    return res.status(500).json({ error: 'Internal server error toggling interest.' });
+  }
+});
+
 // POST /api/events/:id/rsvp (Atomic RSVP Counter & Registration Record - Auth required)
 router.post('/:id/rsvp', authenticate, async (req, res) => {
   try {
@@ -465,9 +648,9 @@ router.post('/:id/rsvp', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Maximum 10 tickets can be reserved per booking.' });
     }
 
-    // Check existence and expiration first
-    const existingEvent = await prisma.event.findUnique({
-      where: { id },
+    // Check existence, soft deletion, and expiration
+    const existingEvent = await prisma.event.findFirst({
+      where: { id, deleted_at: null },
       include: {
         creator: { select: { id: true, name: true, email: true } },
       },
@@ -502,6 +685,7 @@ router.post('/:id/rsvp', authenticate, async (req, res) => {
             user_id: req.user.id,
             user_name: dbUser?.name || 'Registered User',
             user_email: dbUser?.email || 'user@example.com',
+            user_phone: dbUser?.phone || (req.body.phone && typeof req.body.phone === 'string' ? req.body.phone.trim() : null),
             ticket_number: ticketNumber,
           },
         });
@@ -509,7 +693,7 @@ router.post('/:id/rsvp', authenticate, async (req, res) => {
       }
     }
 
-    // Atomic single database update using row-level locking
+    // Atomic single database update
     const updatedEvent = await prisma.event.update({
       where: { id },
       data: {
@@ -537,13 +721,13 @@ router.post('/:id/rsvp', authenticate, async (req, res) => {
   }
 });
 
-// DELETE /api/events/:id/rsvp (Cancel user booking & restore seat count - Auth required)
+// DELETE /api/events/:id/rsvp (SOFT DELETE user booking & restore seat count - Auth required)
 router.delete('/:id/rsvp', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const existingEvent = await prisma.event.findUnique({
-      where: { id },
+    const existingEvent = await prisma.event.findFirst({
+      where: { id, deleted_at: null },
       include: {
         creator: { select: { id: true, name: true, email: true } },
       },
@@ -561,6 +745,7 @@ router.delete('/:id/rsvp', authenticate, async (req, res) => {
       where: {
         event_id: id,
         user_id: req.user.id,
+        deleted_at: null,
       },
     });
 
@@ -569,12 +754,13 @@ router.delete('/:id/rsvp', authenticate, async (req, res) => {
     }
 
     const canceledQty = userRegistrations.length;
+    const registrationIds = userRegistrations.map((r) => r.id);
+    const now = new Date();
 
-    await prisma.eventRegistration.deleteMany({
-      where: {
-        event_id: id,
-        user_id: req.user.id,
-      },
+    // Professional Soft Delete: Mark registrations with deleted_at timestamp
+    await prisma.eventRegistration.updateMany({
+      where: { id: { in: registrationIds } },
+      data: { deleted_at: now },
     });
 
     const updatedEvent = await prisma.event.update({
@@ -605,8 +791,8 @@ router.get('/:id/attendees', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const event = await prisma.event.findUnique({
-      where: { id },
+    const event = await prisma.event.findFirst({
+      where: { id, deleted_at: null },
     });
 
     if (!event) {
@@ -618,9 +804,43 @@ router.get('/:id/attendees', authenticate, async (req, res) => {
     }
 
     const attendees = await prisma.eventRegistration.findMany({
-      where: { event_id: id },
+      where: { event_id: id, deleted_at: null },
+      include: {
+        user: {
+          select: {
+            phone: true,
+          },
+        },
+      },
       orderBy: { ticket_number: 'asc' },
     });
+
+    // Group registrations by unique attendee email
+    const groupedMap = new Map();
+    for (const reg of attendees) {
+      const key = (reg.user_email || reg.user_id || reg.user_name || '').toLowerCase();
+      const phoneNum = reg.user_phone || reg.user?.phone || null;
+
+      if (!groupedMap.has(key)) {
+        groupedMap.set(key, {
+          user_id: reg.user_id,
+          user_name: reg.user_name,
+          user_email: reg.user_email,
+          user_phone: phoneNum,
+          ticket_count: 0,
+          ticket_numbers: [],
+          first_booked_at: reg.created_at,
+        });
+      }
+      const item = groupedMap.get(key);
+      if (!item.user_phone && phoneNum) {
+        item.user_phone = phoneNum;
+      }
+      item.ticket_count += 1;
+      item.ticket_numbers.push(reg.ticket_number);
+    }
+
+    const groupedAttendees = Array.from(groupedMap.values());
 
     return res.status(200).json({
       event_id: id,
@@ -628,6 +848,8 @@ router.get('/:id/attendees', authenticate, async (req, res) => {
       total_tickets: event.total_tickets,
       rsvp_count: event.rsvp_count,
       tickets_remaining: Math.max(0, event.total_tickets - event.rsvp_count),
+      unique_attendees_count: groupedAttendees.length,
+      grouped_attendees: groupedAttendees,
       attendees,
     });
   } catch (error) {
@@ -654,8 +876,8 @@ router.put('/:id', authenticate, async (req, res) => {
       total_tickets,
     } = req.body;
 
-    const existingEvent = await prisma.event.findUnique({
-      where: { id },
+    const existingEvent = await prisma.event.findFirst({
+      where: { id, deleted_at: null },
     });
 
     if (!existingEvent) {
@@ -748,7 +970,6 @@ router.put('/:id', authenticate, async (req, res) => {
       updateData.event_datetime = new Date(event_datetime);
     }
 
-
     const updatedEvent = await prisma.event.update({
       where: { id },
       data: updateData,
@@ -761,13 +982,13 @@ router.put('/:id', authenticate, async (req, res) => {
   }
 });
 
-// DELETE /api/events/:id (Delete Event - Auth & Owner required)
+// DELETE /api/events/:id (SOFT DELETE Event & associated Registrations - Auth & Owner required)
 router.delete('/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
 
-    const existingEvent = await prisma.event.findUnique({
-      where: { id },
+    const existingEvent = await prisma.event.findFirst({
+      where: { id, deleted_at: null },
     });
 
     if (!existingEvent) {
@@ -779,13 +1000,23 @@ router.delete('/:id', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Forbidden. You are not the owner of this event.' });
     }
 
-    await prisma.event.delete({
-      where: { id },
-    });
+    const now = new Date();
+
+    // Professional Soft Delete: update deleted_at timestamps for event and its registrations
+    await prisma.$transaction([
+      prisma.eventRegistration.updateMany({
+        where: { event_id: id, deleted_at: null },
+        data: { deleted_at: now },
+      }),
+      prisma.event.update({
+        where: { id },
+        data: { deleted_at: now },
+      }),
+    ]);
 
     return res.status(204).send();
   } catch (error) {
-    console.error('Error deleting event:', error);
+    console.error('Error soft deleting event:', error);
     return res.status(500).json({ error: 'Internal server error deleting event.' });
   }
 });

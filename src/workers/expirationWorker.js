@@ -5,12 +5,11 @@ const prisma = new PrismaClient();
 async function runExpirationWorker() {
   const timestamp = new Date().toISOString();
   try {
+    const now = new Date();
     const expiredEvents = await prisma.event.findMany({
       where: {
-        OR: [
-          { event_datetime: { lt: new Date() } },
-          { is_expired: true },
-        ],
+        event_datetime: { lt: now },
+        deleted_at: null,
       },
       select: { id: true },
     });
@@ -22,22 +21,31 @@ async function runExpirationWorker() {
 
     const expiredIds = expiredEvents.map(e => e.id);
 
-    // Delete associated registrations first
-    await prisma.eventRegistration.deleteMany({
+    // Soft delete associated registrations first
+    await prisma.eventRegistration.updateMany({
       where: {
         event_id: { in: expiredIds },
+        deleted_at: null,
+      },
+      data: {
+        deleted_at: now,
       },
     });
 
-    // Permanently delete completed past events from database
-    const deleteResult = await prisma.event.deleteMany({
+    // Soft delete completed past events
+    const updateResult = await prisma.event.updateMany({
       where: {
         id: { in: expiredIds },
+        deleted_at: null,
+      },
+      data: {
+        deleted_at: now,
+        is_expired: true,
       },
     });
 
-    console.log(`[ExpirationWorker] [${timestamp}] Scheduled check complete. Deleted ${deleteResult.count} completed past event(s).`);
-    return deleteResult.count;
+    console.log(`[ExpirationWorker] [${timestamp}] Scheduled check complete. Soft-deleted ${updateResult.count} completed past event(s).`);
+    return updateResult.count;
   } catch (error) {
     console.error(`[ExpirationWorker] [${timestamp}] Error running expiration worker:`, error);
     throw error;
@@ -49,14 +57,16 @@ function initExpirationWorker() {
   
   // Run on startup once
   runExpirationWorker().catch(err => {
-    console.error('[ExpirationWorker] Initial startup run failed:', err);
+    console.error('[ExpirationWorker] Error during initial startup run:', err);
   });
 
-  // Schedule to run every hour
-  cron.schedule('0 * * * *', () => {
-    runExpirationWorker().catch(err => {
-      console.error('[ExpirationWorker] Scheduled execution failed:', err);
-    });
+  // Schedule cron job to run at minute 0 of every hour
+  cron.schedule('0 * * * *', async () => {
+    try {
+      await runExpirationWorker();
+    } catch (err) {
+      console.error('[ExpirationWorker] Cron job execution failed:', err);
+    }
   });
 }
 
