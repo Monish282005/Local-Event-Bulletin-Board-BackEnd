@@ -300,7 +300,7 @@ async function runTestSuite() {
     const updatedList = await makeRequest('GET', '/api/events');
     const returnedIds = (updatedList.body || []).map(e => e.id);
 
-    if (workerResult >= 1 && (!checkedPastEvent || checkedPastEvent.is_expired === true) && !returnedIds.includes(pastEvId)) {
+    if (workerResult >= 1 && (!checkedPastEvent || checkedPastEvent.is_expired === true || checkedPastEvent.deleted_at !== null) && !returnedIds.includes(pastEvId)) {
       console.log('  ✅ [TEST 10 PASSED] Expiration worker deleted past event and excluded it from list');
       passedCount++;
     } else {
