@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registration Confirmed</title>
+</head>
+<body style="margin:0; padding:0; background-color:#F0F2F5; font-family: Arial, Helvetica, sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#F0F2F5; padding:24px 0;">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px; max-width:600px; background-color:#FFFFFF; border-radius:14px; overflow:hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.08);">
+
+        <!-- Header -->
+        <tr>
+          <td style="background-color:#1B2A4A; background-image: linear-gradient(135deg, #0F172A 0%, #1B2A4A 100%); padding:28px 32px;" align="center">
+            <p style="margin:0; color:#9FB4E8; font-size:11px; letter-spacing:2px; font-weight:bold; text-transform:uppercase;">LOCAL EVENT BULLETIN BOARD</p>
+            <p style="margin:8px 0 0; color:#FFFFFF; font-size:22px; font-weight:bold;">Registration Confirmed ✅</p>
+          </td>
+        </tr>
+
+        <!-- Greeting -->
+        <tr>
+          <td style="padding:28px 32px 8px;">
+            <p style="margin:0; color:#1B2A4A; font-size:15px;">Hi <strong>{{attendee_name}}</strong>,</p>
+            <p style="margin:10px 0 0; color:#44546A; font-size:14px; line-height:1.6;">
+              Your spot is booked! Your ticket pass and itemized invoice for the event below are included in this email — keep this pass for entry.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Event summary -->
+        <tr>
+          <td style="padding:16px 32px 0;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#EAF0FB; border-radius:12px; border:1px solid #D6E4FF;">
+              <tr>
+                <td style="padding:18px 20px;">
+                  <p style="margin:0; color:#1B2A4A; font-size:18px; font-weight:bold;">{{event_title}}</p>
+                  <p style="margin:8px 0 0; color:#2F5DD4; font-size:13px; font-weight:600;">📅 {{event_datetime}}</p>
+                  <p style="margin:5px 0 0; color:#2F5DD4; font-size:13px; font-weight:600;">📍 {{venue}}</p>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- Ticket Pass (Stylized Curved Notch Ticket Stub Design) -->
+        <tr>
+          <td style="padding:24px 32px 0;">
+            <p style="margin:0 0 12px; color:#1B2A4A; font-size:12px; font-weight:bold; letter-spacing:1.5px; text-transform:uppercase;">YOUR TICKET PASS</p>
+            
+            <!-- Ticket Container -->
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-radius:16px; overflow:hidden; border:1px solid #CBD5E1; box-shadow:0 8px 20px rgba(79,70,229,0.12);">
+              
+              <!-- Top Card (Purple/Navy Modern Gradient Style) -->
+              <tr>
+                <td style="background-color:#4F46E5; background-image: linear-gradient(135deg, #1B2A4A 0%, #4F46E5 50%, #7C3AED 100%); padding:24px 26px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td valign="top">
+                        <p style="margin:0; color:#FFFFFF; font-size:20px; font-weight:bold; letter-spacing:-0.5px;">{{event_title}}</p>
+                        <p style="margin:4px 0 16px; color:#E0E7FF; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:1.5px;">OFFICIAL EVENT PASS</p>
+                        
+                        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;">
+                          <tr>
+                            <td valign="top" style="padding-right:15px;">
+                              <p style="margin:0; color:#C7D2FE; font-size:10px; font-weight:bold; text-transform:uppercase; letter-spacing:1px;">ATTENDEE NAME</p>
+                              <p style="margin:3px 0 10px; color:#FFFFFF; font-size:14px; font-weight:bold; font-style:italic;">{{attendee_name}}</p>
+                            </td>
+                            <td valign="top">
+                              <p style="margin:0; color:#C7D2FE; font-size:10px; font-weight:bold; text-transform:uppercase; letter-spacing:1px;">PASS CODE</p>
+                              <p style="margin:3px 0 0; color:#FFFFFF; font-size:14px; font-weight:bold; font-family:'Courier New', monospace; letter-spacing:1.5px;">{{pass_code}}</p>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                      <td valign="middle" align="right" width="115">
+                        <div style="background:#FFFFFF; padding:6px; border-radius:10px; display:inline-block;">
+                          <img src="{{qr_code_base64}}" width="100" height="100" alt="QR Code" style="display:block; border-radius:6px; border:0;">
+                        </div>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+
+              <!-- Ticket Perforation Line with Side Notches -->
+              <tr>
+                <td style="background-color:#F8FAFC; padding:0;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td width="16" style="background-color:#FFFFFF; height:20px; border-radius:0 10px 10px 0; border-right:1px solid #CBD5E1; border-top:1px solid #CBD5E1; border-bottom:1px solid #CBD5E1;"></td>
+                      <td style="border-top:2px dashed #94A3B8; height:20px;"></td>
+                      <td width="16" style="background-color:#FFFFFF; height:20px; border-radius:10px 0 0 10px; border-left:1px solid #CBD5E1; border-top:1px solid #CBD5E1; border-bottom:1px solid #CBD5E1;"></td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+
+              <!-- Bottom Ticket Stub -->
+              <tr>
+                <td style="background-color:#F8FAFC; padding:18px 26px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td valign="middle">
+                        <p style="margin:0; color:#0F172A; font-size:14px; font-weight:bold;">{{event_title}}</p>
+                        <p style="margin:3px 0 0; color:#64748B; font-size:11.5px;">{{attendee_name}} · Tickets: {{quantity}}</p>
+                      </td>
+                      <td align="right" valign="middle">
+                        <span style="display:inline-block; background-color:#EEF2FF; color:#4F46E5; font-size:13px; font-weight:bold; font-family:'Courier New', monospace; padding:6px 12px; border-radius:6px; border:1px solid #C7D2FE; letter-spacing:1.5px;">{{pass_code}}</span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+            <p style="margin:10px 0 0; color:#94A3B8; font-size:11px; text-align:center;">Present this digital ticket pass & QR code at event entry for scanning.</p>
+          </td>
+        </tr>
+
+        <!-- Invoice -->
+        <tr>
+          <td style="padding:28px 32px 0;">
+            <p style="margin:0 0 10px; color:#1B2A4A; font-size:12px; font-weight:bold; letter-spacing:1.5px; text-transform:uppercase;">PAYMENT INVOICE</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E1E6EF; border-radius:12px;">
+              <tr>
+                <td style="padding:18px 20px 8px;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td style="color:#6B7280; font-size:12px; padding:6px 0;">Transaction ID</td>
+                      <td align="right" style="color:#1B2A4A; font-size:12px; font-weight:bold; font-family:'Courier New', monospace; padding:6px 0;">{{transaction_id}}</td>
+                    </tr>
+                    <tr>
+                      <td style="color:#6B7280; font-size:12px; padding:6px 0;">Payment Date</td>
+                      <td align="right" style="color:#1B2A4A; font-size:12px; padding:6px 0;">{{payment_date}}</td>
+                    </tr>
+                    <tr>
+                      <td style="color:#6B7280; font-size:12px; padding:6px 0;">Billed To</td>
+                      <td align="right" style="color:#1B2A4A; font-size:12px; padding:6px 0;">{{customer_email}}</td>
+                    </tr>
+                  </table>
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px; border-top:1px solid #E1E6EF;">
+                    <tr>
+                      <td style="color:#44546A; font-size:12.5px; padding:12px 0 4px;">Ticket × {{quantity}}</td>
+                      <td align="right" style="color:#44546A; font-size:12.5px; padding:12px 0 4px;">{{ticket_price}}</td>
+                    </tr>
+                    <tr>
+                      <td style="color:#44546A; font-size:12.5px; padding:4px 0;">Subtotal</td>
+                      <td align="right" style="color:#44546A; font-size:12.5px; padding:4px 0;">{{subtotal}}</td>
+                    </tr>
+                    <tr>
+                      <td style="color:#44546A; font-size:12.5px; padding:4px 0 12px;">Tax / GST</td>
+                      <td align="right" style="color:#44546A; font-size:12.5px; padding:4px 0 12px;">{{tax_amount}}</td>
+                    </tr>
+                  </table>
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:1px solid #E1E6EF;">
+                    <tr>
+                      <td style="color:#1B2A4A; font-size:15px; font-weight:bold; padding:14px 0;">Total Paid</td>
+                      <td align="right" style="color:#2F5DD4; font-size:18px; font-weight:bold; padding:14px 0;">{{total_amount}}</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- CTA -->
+        <tr>
+          <td style="padding:28px 32px 0;" align="center">
+            <a href="{{app_base_url}}/my-bookings" style="display:inline-block; background-color:#2F5DD4; background-image: linear-gradient(135deg, #2F5DD4 0%, #4F46E5 100%); color:#FFFFFF; text-decoration:none; font-size:13px; font-weight:bold; padding:14px 32px; border-radius:10px; box-shadow:0 4px 12px rgba(47,93,212,0.3);">View My Bookings</a>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="padding:28px 32px 32px;" align="center">
+            <p style="margin:0; color:#9AA5B1; font-size:11.5px;">See you at the event! If you have any questions, reply to this email.</p>
+            <p style="margin:10px 0 0; color:#C4CAD4; font-size:10.5px;">Local Event Bulletin Board · Automated Confirmation System</p>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

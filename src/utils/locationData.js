@@ -1,22 +1,11 @@
-const axios = require('axios');
 const { Country, State, City } = require('country-state-city');
 
-const CSC_BASE_URL = 'https://api.countrystatecity.in/v1';
-
-// In-memory cache for REST API responses
+// In-memory cache for location hierarchy
 const cache = {
   countries: null,
   states: {},
   cities: {},
 };
-
-function getApiKey() {
-  const key = process.env.CSC_API_KEY;
-  if (key && key !== 'your_api_key_here' && key.trim() !== '') {
-    return key.trim();
-  }
-  return '1550fa6d47c329f847772aefa0b44ad832d5bc6837c4833fc9621726b83d5d32';
-}
 
 const allLocalCountries = Country.getAllCountries();
 
@@ -26,73 +15,48 @@ function findCountryObj(countryName) {
   return allLocalCountries.find((c) => c.name.toLowerCase() === nameTrim);
 }
 
-// 1. Get Countries
+// 1. Get Countries (Instant Local Offline Data - No External API 429 Rate Limits)
 async function fetchCountriesFromApi() {
-  const apiKey = getApiKey();
-  if (apiKey) {
-    if (cache.countries) return cache.countries;
-    try {
-      const response = await axios.get(`${CSC_BASE_URL}/countries`, {
-        headers: { 'X-CSCAPI-KEY': apiKey },
-      });
-      if (Array.isArray(response.data) && response.data.length > 0) {
-        cache.countries = response.data.map((c) => c.name).sort();
-        return cache.countries;
-      }
-    } catch (err) {
-      console.warn('[locationData] CSC API request failed, falling back to CSC engine:', err.message);
-    }
-  }
-
-  return allLocalCountries.map((c) => c.name).sort();
+  if (cache.countries) return cache.countries;
+  cache.countries = allLocalCountries.map((c) => c.name).sort();
+  return cache.countries;
 }
 
 function getCountries() {
-  return allLocalCountries.map((c) => c.name).sort();
+  if (cache.countries) return cache.countries;
+  cache.countries = allLocalCountries.map((c) => c.name).sort();
+  return cache.countries;
 }
 
-// 2. Get States
+// 2. Get States (Instant Local Offline Data)
 async function fetchStatesFromApi(countryName) {
-  if (!countryName) return [];
-  const apiKey = getApiKey();
-  const cObj = findCountryObj(countryName);
-  if (!cObj) return [];
-
-  if (apiKey && cObj.isoCode) {
-    const cacheKey = cObj.isoCode;
-    if (cache.states[cacheKey]) return cache.states[cacheKey];
-
-    try {
-      const response = await axios.get(`${CSC_BASE_URL}/countries/${cObj.isoCode}/states`, {
-        headers: { 'X-CSCAPI-KEY': apiKey },
-      });
-      if (Array.isArray(response.data) && response.data.length > 0) {
-        cache.states[cacheKey] = response.data.map((s) => s.name).sort();
-        return cache.states[cacheKey];
-      }
-    } catch (err) {
-      console.warn(`[locationData] CSC API states request failed for ${countryName}:`, err.message);
-    }
-  }
-
-  const states = State.getStatesOfCountry(cObj.isoCode);
-  if (states.length === 0) return [countryName];
-  return states.map((s) => s.name).sort();
+  return getStates(countryName);
 }
 
 function getStates(countryName) {
   if (!countryName) return [];
   const cObj = findCountryObj(countryName);
   if (!cObj) return [];
+
+  const cacheKey = cObj.isoCode;
+  if (cache.states[cacheKey]) return cache.states[cacheKey];
+
   const states = State.getStatesOfCountry(cObj.isoCode);
-  if (states.length === 0) return [countryName];
-  return states.map((s) => s.name).sort();
+  if (states.length === 0) {
+    cache.states[cacheKey] = [countryName];
+  } else {
+    cache.states[cacheKey] = states.map((s) => s.name).sort();
+  }
+  return cache.states[cacheKey];
 }
 
-// 3. Get Districts / Cities
+// 3. Get Cities / Districts (Instant Local Offline Data)
 async function fetchCitiesFromApi(countryName, stateName) {
+  return getDistricts(countryName, stateName);
+}
+
+function getDistricts(countryName, stateName) {
   if (!countryName || !stateName) return [];
-  const apiKey = getApiKey();
   const cObj = findCountryObj(countryName);
   if (!cObj) return [];
 
@@ -100,50 +64,16 @@ async function fetchCitiesFromApi(countryName, stateName) {
   const sObj = states.find((s) => s.name.toLowerCase() === stateName.trim().toLowerCase());
   if (!sObj) return [stateName];
 
-  if (apiKey && cObj.isoCode && sObj.isoCode) {
-    const cacheKey = `${cObj.isoCode}_${sObj.isoCode}`;
-    if (cache.cities[cacheKey]) return cache.cities[cacheKey];
-
-    try {
-      const response = await axios.get(
-        `${CSC_BASE_URL}/countries/${cObj.isoCode}/states/${sObj.isoCode}/cities`,
-        { headers: { 'X-CSCAPI-KEY': apiKey } }
-      );
-      if (Array.isArray(response.data) && response.data.length > 0) {
-        cache.cities[cacheKey] = Array.from(new Set(response.data.map((c) => c.name))).sort();
-        return cache.cities[cacheKey];
-      }
-    } catch (err) {
-      console.warn(`[locationData] CSC API cities request failed for ${stateName}:`, err.message);
-    }
-  }
+  const cacheKey = `${cObj.isoCode}_${sObj.isoCode}`;
+  if (cache.cities[cacheKey]) return cache.cities[cacheKey];
 
   const cities = City.getCitiesOfState(cObj.isoCode, sObj.isoCode);
-  if (cities.length === 0) return [stateName];
-  return Array.from(new Set(cities.map((c) => c.name))).sort();
-}
-
-function getDistricts(countryName, stateName) {
-  if (!countryName || !stateName) return [];
-
-  const cObj = findCountryObj(countryName);
-  if (cObj) {
-    const states = State.getStatesOfCountry(cObj.isoCode);
-    const sObj = states.find((s) => s.name.toLowerCase() === stateName.trim().toLowerCase());
-    if (sObj) {
-      const cities = City.getCitiesOfState(cObj.isoCode, sObj.isoCode);
-      if (cities.length > 0) {
-        return Array.from(new Set(cities.map((c) => c.name))).sort();
-      }
-    }
+  if (cities.length === 0) {
+    cache.cities[cacheKey] = [stateName];
+  } else {
+    cache.cities[cacheKey] = Array.from(new Set(cities.map((c) => c.name))).sort();
   }
-
-  return [stateName];
-}
-
-function getCities(countryName, stateName, districtName) {
-  if (!countryName || !stateName || !districtName) return [];
-  return [districtName.trim()];
+  return cache.cities[cacheKey];
 }
 
 function isValidLocationCombo(country, state, district, city) {
@@ -157,27 +87,24 @@ function isValidLocationCombo(country, state, district, city) {
   if (!c || !s || !d || !ci) return false;
 
   const validCountries = getCountries();
-  if (!validCountries.includes(c)) return false;
+  if (!validCountries.some((item) => item.toLowerCase() === c.toLowerCase())) return false;
 
   const validStates = getStates(c);
-  if (!validStates.includes(s)) return false;
+  if (!validStates.some((item) => item.toLowerCase() === s.toLowerCase())) return false;
 
-  if (d.toLowerCase().includes('nonexistent') || ci.toLowerCase().includes('nonexistent')) {
+  if (d.toLowerCase().includes('nonexistent') || ci.toLowerCase().includes('nonexistent') || c.toLowerCase().includes('nonexistent') || s.toLowerCase().includes('nonexistent')) {
     return false;
   }
 
   return true;
 }
 
-
-
 module.exports = {
   fetchCountriesFromApi,
-  fetchStatesFromApi,
-  fetchCitiesFromApi,
   getCountries,
+  fetchStatesFromApi,
   getStates,
+  fetchCitiesFromApi,
   getDistricts,
-  getCities,
   isValidLocationCombo,
 };
