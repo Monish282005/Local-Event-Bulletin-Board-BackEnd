@@ -172,15 +172,29 @@ router.post('/', authenticate, async (req, res) => {
 });
 
 
-// GET /api/events/my-events (List active non-soft-deleted events created by logged-in user - Auth required)
+// GET /api/events/my-events (List active or archived non-soft-deleted events created by logged-in user - Auth required)
 router.get('/my-events', authenticate, async (req, res) => {
   try {
-    const { page, limit } = req.query;
+    const { page, limit, status } = req.query;
+    const now = new Date();
+
+    const isArchived = status === 'archived';
 
     const whereClause = {
       created_by: req.user.id,
-      is_expired: false,
       deleted_at: null,
+      ...(isArchived
+        ? {
+            OR: [
+              { is_expired: true },
+              { event_datetime: { lte: now } }
+            ]
+          }
+        : {
+            is_expired: false,
+            event_datetime: { gt: now }
+          }
+      )
     };
 
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -193,7 +207,7 @@ router.get('/my-events', authenticate, async (req, res) => {
       where: whereClause,
       include: { creator: { select: { id: true, name: true, email: true } } },
       orderBy: {
-        event_datetime: 'asc',
+        event_datetime: isArchived ? 'desc' : 'asc',
       },
       skip,
       take: limitNum,
@@ -356,6 +370,7 @@ router.get('/', async (req, res) => {
           { city: { contains: term } },
           { district: { contains: term } },
           { state: { contains: term } },
+          { country: { contains: term } },
           { neighborhood: { contains: term } },
           { location: { contains: term } },
         ];
@@ -387,6 +402,9 @@ router.get('/', async (req, res) => {
 
     let orderBy = { event_datetime: 'asc' };
     if (sort === 'datetime_desc') orderBy = { event_datetime: 'desc' };
+    else if (sort === 'datetime_asc') orderBy = { event_datetime: 'asc' };
+    else if (sort === 'price_asc') orderBy = { ticket_price: 'asc' };
+    else if (sort === 'price_desc') orderBy = { ticket_price: 'desc' };
     else if (sort === 'created_desc') orderBy = { created_at: 'desc' };
     else if (sort === 'popularity_desc') orderBy = { rsvp_count: 'desc' };
 
@@ -518,19 +536,27 @@ router.get('/feed', optionalAuthenticate, async (req, res) => {
 
     const searchParam = search || query || q;
     if (searchParam && typeof searchParam === 'string' && searchParam.trim()) {
-      const searchTerm = searchParam.trim();
-      baseWhere.OR = [
-        { title: { contains: searchTerm } },
-        { description: { contains: searchTerm } },
-        { location: { contains: searchTerm } },
-        { neighborhood: { contains: searchTerm } },
-        { city: { contains: searchTerm } },
-        { state: { contains: searchTerm } },
-      ];
+      const fullSearch = searchParam.trim();
+      const tokens = fullSearch.split(/\s+/).filter((t) => t.length > 1);
+      const allSearchTerms = Array.from(new Set([fullSearch, ...tokens]));
+
+      baseWhere.OR = allSearchTerms.flatMap((term) => [
+        { title: { contains: term } },
+        { description: { contains: term } },
+        { location: { contains: term } },
+        { neighborhood: { contains: term } },
+        { city: { contains: term } },
+        { district: { contains: term } },
+        { state: { contains: term } },
+        { country: { contains: term } },
+      ]);
     }
 
     let orderBy = { event_datetime: 'asc' };
     if (sort === 'datetime_desc') orderBy = { event_datetime: 'desc' };
+    else if (sort === 'datetime_asc') orderBy = { event_datetime: 'asc' };
+    else if (sort === 'price_asc') orderBy = { ticket_price: 'asc' };
+    else if (sort === 'price_desc') orderBy = { ticket_price: 'desc' };
     else if (sort === 'created_desc') orderBy = { created_at: 'desc' };
     else if (sort === 'popularity_desc') orderBy = { rsvp_count: 'desc' };
 
@@ -703,6 +729,10 @@ router.post('/:id/create-razorpay-order', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Event not found or expired.' });
     }
 
+    if (existingEvent.created_by === req.user.id) {
+      return res.status(403).json({ error: 'As the host and organizer of this event, you cannot register or purchase tickets for your own event.' });
+    }
+
     const remainingTickets = Math.max(0, existingEvent.total_tickets - existingEvent.rsvp_count);
     if (remainingTickets <= 0) {
       return res.status(400).json({ error: 'Event is sold out. No more tickets available.' });
@@ -752,6 +782,27 @@ router.post('/:id/create-razorpay-order', authenticate, async (req, res) => {
   }
 });
 
+async function getRecycledTicketNumbers(eventId, requestedQty) {
+  const activeRegs = await prisma.eventRegistration.findMany({
+    where: { event_id: eventId, deleted_at: null },
+    select: { ticket_number: true },
+  });
+
+  const activeSet = new Set(activeRegs.map((r) => r.ticket_number));
+  const issuedTickets = [];
+  let candidate = 1;
+
+  while (issuedTickets.length < requestedQty) {
+    if (!activeSet.has(candidate)) {
+      issuedTickets.push(candidate);
+      activeSet.add(candidate);
+    }
+    candidate++;
+  }
+
+  return issuedTickets;
+}
+
 // POST /api/events/:id/verify-razorpay-payment (Verify Razorpay Payment & Complete Registration)
 router.post('/:id/verify-razorpay-payment', authenticate, async (req, res) => {
   try {
@@ -772,6 +823,10 @@ router.post('/:id/verify-razorpay-payment', authenticate, async (req, res) => {
 
     if (!existingEvent || existingEvent.is_expired) {
       return res.status(404).json({ error: 'Event not found or expired.' });
+    }
+
+    if (existingEvent.created_by === req.user.id) {
+      return res.status(403).json({ error: 'As the host and organizer of this event, you cannot register or purchase tickets for your own event.' });
     }
 
     const remainingTickets = Math.max(0, existingEvent.total_tickets - existingEvent.rsvp_count);
@@ -795,10 +850,13 @@ router.post('/:id/verify-razorpay-payment', authenticate, async (req, res) => {
     const totalPaid = (existingEvent.ticket_price || 0) * requestedQty;
     const paymentIdStr = razorpay_payment_id || `FREE_${Date.now()}`;
     const orderIdStr = razorpay_order_id || `ORD_FREE_${Date.now()}`;
+
+    // Get recycled/freed ticket pass numbers first
+    const ticketNumbersToAssign = await getRecycledTicketNumbers(id, requestedQty);
     const issuedTickets = [];
 
     for (let i = 0; i < requestedQty; i++) {
-      const ticketNumber = existingEvent.rsvp_count + i + 1;
+      const ticketNumber = ticketNumbersToAssign[i];
       const reg = await prisma.eventRegistration.create({
         data: {
           id: uuidv4(),
@@ -885,6 +943,10 @@ router.post('/:id/rsvp', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Event not found or expired.' });
     }
 
+    if (existingEvent.created_by === req.user.id) {
+      return res.status(403).json({ error: 'As the host and organizer of this event, you cannot register or purchase tickets for your own event.' });
+    }
+
     const remainingTickets = Math.max(0, existingEvent.total_tickets - existingEvent.rsvp_count);
 
     // Capacity check
@@ -896,13 +958,14 @@ router.post('/:id/rsvp', authenticate, async (req, res) => {
       return res.status(400).json({ error: `Only ${remainingTickets} ticket(s) remaining for this event.` });
     }
 
+    const ticketNumbersToAssign = await getRecycledTicketNumbers(id, requestedQty);
     const issuedTickets = [];
 
     if (req.user && req.user.id) {
       const dbUser = await prisma.user.findUnique({ where: { id: req.user.id } });
 
       for (let i = 0; i < requestedQty; i++) {
-        const ticketNumber = existingEvent.rsvp_count + i + 1;
+        const ticketNumber = ticketNumbersToAssign[i];
         const reg = await prisma.eventRegistration.create({
           data: {
             id: uuidv4(),
