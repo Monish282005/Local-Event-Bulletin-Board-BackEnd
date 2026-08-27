@@ -9,6 +9,7 @@ async function runExpirationWorker() {
     const expiredEvents = await prisma.event.findMany({
       where: {
         event_datetime: { lt: now },
+        is_expired: false,
         deleted_at: null,
       },
       select: { id: true },
@@ -32,19 +33,18 @@ async function runExpirationWorker() {
       },
     });
 
-    // Soft delete completed past events
+    // Mark completed past events as expired (is_expired: true) for archiving
     const updateResult = await prisma.event.updateMany({
       where: {
         id: { in: expiredIds },
         deleted_at: null,
       },
       data: {
-        deleted_at: now,
         is_expired: true,
       },
     });
 
-    console.log(`[ExpirationWorker] [${timestamp}] Scheduled check complete. Soft-deleted ${updateResult.count} completed past event(s).`);
+    console.log(`[ExpirationWorker] [${timestamp}] Scheduled check complete. Expired ${updateResult.count} completed past event(s).`);
     return updateResult.count;
   } catch (error) {
     console.error(`[ExpirationWorker] [${timestamp}] Error running expiration worker:`, error);

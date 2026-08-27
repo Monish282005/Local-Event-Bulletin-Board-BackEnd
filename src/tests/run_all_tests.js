@@ -319,7 +319,7 @@ async function runTestSuite() {
     // Test 12: RSVP atomic increment under 20 concurrent calls (+20 count, zero lost updates)
     const rsvpPromises = [];
     for (let i = 0; i < 20; i++) {
-      rsvpPromises.push(makeRequest('POST', `/api/events/${e2.body.id}/rsvp`, null, { Authorization: `Bearer ${user1Token}` }));
+      rsvpPromises.push(makeRequest('POST', `/api/events/${e2.body.id}/rsvp`, null, { Authorization: `Bearer ${user2Token}` }));
     }
     const rsvpResponses = await Promise.all(rsvpPromises);
     const successCount = rsvpResponses.filter(r => r.status === 200).length;
