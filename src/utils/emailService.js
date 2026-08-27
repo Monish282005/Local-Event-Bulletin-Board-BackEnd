@@ -1,5 +1,7 @@
 const axios = require('axios');
 const nodemailer = require('nodemailer');
+const { generateQrCodeBase64 } = require('./qrCodeHelper');
+const { generateConfirmationEmailHtml } = require('./emailTemplateHelper');
 
 const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || 'service_dtdc1i7';
 const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || 'template_o68loll';
@@ -7,7 +9,7 @@ const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || 'XKPihqhW-GdZF_BwL'
 const EMAILJS_PRIVATE_KEY = process.env.EMAILJS_PRIVATE_KEY || '';
 
 /**
- * Creates and configures Nodemailer SMTP transport fallback.
+ * Configures Nodemailer SMTP transport fallback.
  */
 function getTransporter() {
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
@@ -33,168 +35,130 @@ function getTransporter() {
 const transporter = getTransporter();
 
 /**
- * Generates the user's exact requested HTML invoice template.
+ * Module 21: Ticket Confirmation & Invoice Email Dispatcher
+ * Sends confirmation email containing digital ticket pass, QR code, and itemized invoice.
+ *
+ * @param {object} bookingDetails - Detailed ticket booking object
+ * @returns {Promise<boolean>} Success status
  */
-function generateInvoiceHtml({
-  userName,
-  userEmail,
-  eventTitle,
-  eventDate,
-  location,
-  neighborhood,
-  city,
-  state,
-  organizerName,
-  organizerEmail,
-  ticketNumbers = [],
-  quantity = 1,
-  ticketPrice = 0,
-  totalAmountPaid = 0,
-  paymentId = 'FREE_RSVP',
-  orderId = 'ORD_FREE',
-  bookedAt = new Date().toISOString(),
-}) {
-  const formattedBookedDate = new Date(bookedAt).toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-
-  const fullLocation = [location, neighborhood, city, state].filter(Boolean).join(', ');
-
-  return `
-<div style="font-family: Arial, sans-serif; background:#f5f5f5; padding:30px;">
-  <div style="max-width:650px; margin:auto; background:#ffffff; border-radius:12px; overflow:hidden;">
-
-    <!-- Header -->
-    <div style="background:#111827; color:white; padding:25px 30px;">
-      <h1 style="margin:0; font-size:24px;">Local Event</h1>
-      <p style="margin:8px 0 0; color:#d1d5db;">
-        Payment Confirmation & Invoice
-      </p>
-    </div>
-
-    <!-- Success -->
-    <div style="padding:30px;">
-      <h2 style="color:#16a34a; margin-top:0;">
-        ✓ Payment Successful
-      </h2>
-
-      <p style="font-size:16px; color:#374151;">
-        Hi <strong>${userName}</strong>,
-      </p>
-
-      <p style="color:#4b5563; line-height:1.6;">
-        Thank you for registering for the event. Your payment has been
-        successfully completed and your booking is confirmed.
-      </p>
-
-      <!-- Event Details -->
-      <div style="background:#f9fafb; border-radius:10px; padding:20px; margin:25px 0;">
-        <h3 style="margin-top:0; color:#111827;">Event Details</h3>
-
-        <p><strong>Event:</strong> ${eventTitle}</p>
-        <p><strong>Date:</strong> ${eventDate}</p>
-        <p><strong>Location:</strong> ${fullLocation}</p>
-        <p><strong>Ticket:</strong> Entry Pass ${ticketNumbers.length > 0 ? `(#${ticketNumbers.join(', #')})` : ''}</p>
-        <p><strong>Quantity:</strong> ${quantity}</p>
-      </div>
-
-      <!-- Payment Details -->
-      <div style="background:#f9fafb; border-radius:10px; padding:20px; margin:25px 0;">
-        <h3 style="margin-top:0; color:#111827;">Payment Details</h3>
-
-        <p><strong>Amount Paid:</strong> ₹${totalAmountPaid.toFixed(2)}</p>
-        <p><strong>Payment ID:</strong> ${paymentId}</p>
-        <p><strong>Order ID:</strong> ${orderId}</p>
-        <p><strong>Payment Date:</strong> ${formattedBookedDate}</p>
-      </div>
-
-      <div style="border-top:1px solid #e5e7eb; padding-top:20px; margin-top:25px;">
-        <p style="color:#6b7280; font-size:14px;">
-          Please keep this email as your payment confirmation and invoice
-          for your records.
-        </p>
-
-        <p style="color:#6b7280; font-size:14px;">
-          We look forward to seeing you at the event!
-        </p>
-      </div>
-
-      <p style="margin-top:30px; color:#111827;">
-        Regards,<br>
-        <strong>Local Event Team</strong>
-      </p>
-    </div>
-
-    <!-- Footer -->
-    <div style="background:#f3f4f6; padding:18px 30px; text-align:center;">
-      <p style="margin:0; color:#6b7280; font-size:12px;">
-        This is an automated payment confirmation from Local Event.
-      </p>
-    </div>
-
-  </div>
-</div>
-  `;
-}
-
-/**
- * Sends invoice email using EmailJS API service (service_dtdc1i7 / template_o68loll) with Nodemailer fallback.
- */
-async function sendInvoiceEmail(invoiceDetails) {
-  if (!invoiceDetails || !invoiceDetails.userEmail) {
-    console.warn('[EmailService] Missing userEmail for invoice dispatch.');
+async function sendTicketConfirmationEmail(bookingDetails) {
+  if (!bookingDetails || (!bookingDetails.userEmail && !bookingDetails.customer_email)) {
+    console.warn('[EmailService] Missing userEmail for confirmation email dispatch.');
     return false;
   }
 
-  const formattedBookedDate = invoiceDetails.bookedAt
-    ? new Date(invoiceDetails.bookedAt).toLocaleDateString('en-US', {
+  const recipientEmail = bookingDetails.userEmail || bookingDetails.customer_email;
+  const attendeeName = bookingDetails.userName || bookingDetails.attendee_name || bookingDetails.name || 'Valued Guest';
+  const eventTitle = bookingDetails.eventTitle || bookingDetails.event_title || 'Local Event';
+  const eventDate = bookingDetails.eventDate || bookingDetails.event_datetime || 'Upcoming Event';
+
+  const fullVenue = [
+    bookingDetails.location || bookingDetails.venue,
+    bookingDetails.neighborhood,
+    bookingDetails.city,
+    bookingDetails.state,
+  ].filter(Boolean).join(', ') || 'Venue Location';
+
+  const quantity = parseInt(bookingDetails.quantity, 10) || 1;
+  const ticketNumbers = bookingDetails.ticketNumbers || (bookingDetails.ticket_number ? [bookingDetails.ticket_number] : []);
+
+  // Determine unique Pass Code
+  let passCode = bookingDetails.passCode || bookingDetails.pass_code;
+  if (!passCode) {
+    if (ticketNumbers.length > 0) {
+      passCode = `PASS-${ticketNumbers.join('-')}`;
+    } else if (bookingDetails.paymentId || bookingDetails.transaction_id) {
+      passCode = `PASS-${(bookingDetails.paymentId || bookingDetails.transaction_id).slice(-8).toUpperCase()}`;
+    } else {
+      passCode = `PASS-${Math.floor(100000 + Math.random() * 900000)}`;
+    }
+  }
+
+  // Step 1: Generate Base64 QR Code encoding the Pass Code
+  let qrCodeBase64 = '';
+  try {
+    qrCodeBase64 = await generateQrCodeBase64(passCode);
+  } catch (err) {
+    console.warn('[EmailService] Notice: Failed to generate QR code Base64:', err.message);
+  }
+
+  const unitPrice = parseFloat(bookingDetails.ticketPrice ?? bookingDetails.ticket_price ?? 0);
+  const totalAmountPaid = parseFloat(bookingDetails.totalAmountPaid ?? bookingDetails.total_amount ?? (unitPrice * quantity));
+  const transactionId = bookingDetails.paymentId || bookingDetails.transaction_id || bookingDetails.orderId || 'TXN_FREE_RSVP';
+
+  const formattedBookedDate = bookingDetails.bookedAt
+    ? new Date(bookingDetails.bookedAt).toLocaleDateString('en-US', {
         weekday: 'short',
         month: 'short',
         day: 'numeric',
         year: 'numeric',
       })
-    : new Date().toLocaleDateString('en-US');
+    : new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
-  const fullLocation = [
-    invoiceDetails.location,
-    invoiceDetails.neighborhood,
-    invoiceDetails.city,
-    invoiceDetails.state,
-  ].filter(Boolean).join(', ');
+  const formattedTicketPrice = unitPrice > 0 ? `₹${unitPrice.toFixed(2)}` : 'FREE';
+  const formattedSubtotal = unitPrice > 0 ? `₹${(unitPrice * quantity).toFixed(2)}` : '₹0.00 (FREE)';
+  const formattedTotalPaid = totalAmountPaid > 0 ? `₹${totalAmountPaid.toFixed(2)}` : '₹0.00 (FREE)';
+  const appBaseUrl = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/$/, '');
 
-  const templateParams = {
-    to_email: invoiceDetails.userEmail,
-    user_email: invoiceDetails.userEmail,
-    email: invoiceDetails.userEmail,
-    to: invoiceDetails.userEmail,
-    recipient: invoiceDetails.userEmail,
-    recipient_email: invoiceDetails.userEmail,
-    reply_to: invoiceDetails.userEmail,
-
-    to_name: invoiceDetails.userName || 'Valued Customer',
-    user_name: invoiceDetails.userName || 'Valued Customer',
-    name: invoiceDetails.userName || 'Valued Customer',
-
-    event_name: invoiceDetails.eventTitle || 'Local Event',
-    event_title: invoiceDetails.eventTitle || 'Local Event',
-    event_date: invoiceDetails.eventDate || 'N/A',
-    event_location: fullLocation || 'Venue Location',
-    ticket_type: invoiceDetails.ticketNumbers && invoiceDetails.ticketNumbers.length > 0
-      ? `Entry Pass (#${invoiceDetails.ticketNumbers.join(', #')})`
-      : 'Standard Entry Pass',
-    quantity: invoiceDetails.quantity || 1,
-    amount: (invoiceDetails.totalAmountPaid || 0).toFixed(2),
-    payment_id: invoiceDetails.paymentId || 'FREE_RSVP',
-    order_id: invoiceDetails.orderId || 'ORD_FREE',
+  // Step 2: Compile HTML Email using the attached HTML Email Template
+  const htmlContent = generateConfirmationEmailHtml({
+    attendee_name: attendeeName,
+    customer_email: recipientEmail,
+    event_title: eventTitle,
+    event_datetime: eventDate,
+    venue: fullVenue,
+    pass_code: passCode,
+    qr_code_base64: qrCodeBase64,
+    quantity,
+    ticket_price: unitPrice,
+    total_amount: totalAmountPaid,
+    transaction_id: transactionId,
     payment_date: formattedBookedDate,
+    app_base_url: appBaseUrl,
+  });
+
+  // Step 3: Prepare complete EmailJS template parameters (matching template merge fields exactly)
+  const templateParams = {
+    // Exact merge fields from HTML Email Template
+    attendee_name: attendeeName,
+    event_title: eventTitle,
+    event_datetime: eventDate,
+    venue: fullVenue,
+    pass_code: passCode,
+    qr_code_base64: qrCodeBase64,
+    quantity: String(quantity),
+    transaction_id: transactionId,
+    payment_date: formattedBookedDate,
+    customer_email: recipientEmail,
+    ticket_price: formattedTicketPrice,
+    subtotal: formattedSubtotal,
+    tax_amount: '₹0.00 (Included)',
+    total_amount: formattedTotalPaid,
+    app_base_url: appBaseUrl,
+
+    // EmailJS routing fallbacks
+    to_email: recipientEmail,
+    user_email: recipientEmail,
+    email: recipientEmail,
+    to: recipientEmail,
+    recipient: recipientEmail,
+    recipient_email: recipientEmail,
+    reply_to: recipientEmail,
+
+    to_name: attendeeName,
+    user_name: attendeeName,
+    name: attendeeName,
+
+    event_name: eventTitle,
+    event_date: eventDate,
+    event_location: fullVenue,
+    ticket_type: ticketNumbers.length > 0 ? `Pass (${passCode})` : 'Standard Entry Pass',
+    amount: totalAmountPaid.toFixed(2),
+    payment_id: transactionId,
+    order_id: bookingDetails.orderId || 'ORD_FREE',
   };
 
-  let emailJsSuccess = false;
-
-  // 1. Try sending via EmailJS REST API
+  // Step 4: Dispatch email (Try EmailJS first. If successful, DO NOT duplicate via Nodemailer)
   try {
     const payload = {
       service_id: EMAILJS_SERVICE_ID,
@@ -213,35 +177,42 @@ async function sendInvoiceEmail(invoiceDetails) {
     });
 
     if (response.status === 200 || response.data === 'OK') {
-      console.log(`[EmailJS] ✅ Invoice email sent successfully to ${invoiceDetails.userEmail} via EmailJS (Service: ${EMAILJS_SERVICE_ID}, Template: ${EMAILJS_TEMPLATE_ID})`);
-      emailJsSuccess = true;
+      console.log(`[EmailJS] ✅ Confirmation email sent successfully to ${recipientEmail} via EmailJS (Service: ${EMAILJS_SERVICE_ID}, Template: ${EMAILJS_TEMPLATE_ID})`);
+      return true; // Return immediately to avoid sending duplicate email via Nodemailer
     }
   } catch (err) {
     console.warn(`[EmailJS] Notice: EmailJS dispatch returned (${err.response?.status}):`, err.response?.data || err.message);
   }
 
-  // 2. Send via Nodemailer transporter with exact requested HTML invoice template
+  // Fallback to Nodemailer transporter ONLY if EmailJS was not sent
   try {
-    const fromEmail = process.env.EMAIL_FROM || '"Local Event" <no-reply@localeventbulletin.com>';
-    const htmlContent = generateInvoiceHtml(invoiceDetails);
+    const fromEmail = process.env.EMAIL_FROM || '"Local Event Bulletin Board" <no-reply@localeventbulletin.com>';
 
     const mailOptions = {
       from: fromEmail,
-      to: invoiceDetails.userEmail,
-      subject: `✓ Payment Confirmation & Invoice - ${invoiceDetails.eventTitle}`,
+      to: recipientEmail,
+      subject: `✅ Registration Confirmed & Pass - ${eventTitle}`,
       html: htmlContent,
     };
 
-    const info = await transporter.sendMail(mailOptions);
-    console.log(`[EmailService] ✅ Invoice email dispatched to ${invoiceDetails.userEmail}`);
+    await transporter.sendMail(mailOptions);
+    console.log(`[EmailService] ✅ Digital Pass & Invoice email dispatched via Nodemailer fallback to ${recipientEmail}`);
     return true;
   } catch (error) {
     console.error(`[EmailService] Failed to dispatch Nodemailer fallback email:`, error.message);
-    return emailJsSuccess;
+    return false;
   }
 }
 
+/**
+ * Backwards-compatibility alias for sendInvoiceEmail
+ */
+async function sendInvoiceEmail(invoiceDetails) {
+  return sendTicketConfirmationEmail(invoiceDetails);
+}
+
 module.exports = {
+  sendTicketConfirmationEmail,
   sendInvoiceEmail,
-  generateInvoiceHtml,
+  generateInvoiceHtml: generateConfirmationEmailHtml,
 };
