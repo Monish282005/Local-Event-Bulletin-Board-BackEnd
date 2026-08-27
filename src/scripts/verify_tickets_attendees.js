@@ -129,8 +129,19 @@ async function verifyTicketsAndAttendees() {
     }
     console.log('✅ TEST 3 PASSED: Bob registered & issued Ticket #2');
 
+    const user3Res = await makeRequest('POST', '/api/auth/signup', {
+      name: 'Charlie Brown',
+      email: `charlie_${Date.now()}@example.com`,
+      password: 'Password123!',
+      country: 'India',
+      state: 'Karnataka',
+      district: 'Bengaluru Urban',
+      city: 'Bengaluru',
+    });
+    const user3Token = user3Res.body.token;
+
     // 5. User 3 attempts registration when capacity is full -> Expected 400 Sold Out
-    const rsvp3Res = await makeRequest('POST', `/api/events/${eventId}/rsvp`, {}, { Authorization: `Bearer ${organizerToken}` });
+    const rsvp3Res = await makeRequest('POST', `/api/events/${eventId}/rsvp`, {}, { Authorization: `Bearer ${user3Token}` });
     if (rsvp3Res.status !== 400 || !rsvp3Res.body.error.includes('sold out')) {
       console.error('❌ TEST 4 FAILED: Expected 400 Sold Out error, got:', rsvp3Res.status, rsvp3Res.body);
       process.exit(1);
