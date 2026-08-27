@@ -309,6 +309,9 @@ router.get('/my-bookings', authenticate, async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const {
+      city,
+      state,
+      country,
       neighborhood,
       category,
       search,
@@ -328,18 +331,39 @@ router.get('/', async (req, res) => {
       deleted_at: null,
     };
 
+    if (city && typeof city === 'string' && city.trim()) {
+      whereClause.city = { contains: city.trim() };
+    }
+
+    if (state && typeof state === 'string' && state.trim()) {
+      whereClause.state = { contains: state.trim() };
+    }
+
+    if (country && typeof country === 'string' && country.trim()) {
+      whereClause.country = { contains: country.trim() };
+    }
+
     const searchParam = neighborhood || search || query || q;
     if (searchParam && typeof searchParam === 'string' && searchParam.trim()) {
-      const searchTerm = searchParam.trim();
-      whereClause.OR = [
-        { city: { contains: searchTerm } },
-        { district: { contains: searchTerm } },
-        { neighborhood: { contains: searchTerm } },
-        { state: { contains: searchTerm } },
-        { title: { contains: searchTerm } },
-        { location: { contains: searchTerm } },
-        { description: { contains: searchTerm } },
-      ];
+      const fullSearch = searchParam.trim();
+      const tokens = fullSearch.split(/\s+/).filter((t) => t.length > 1);
+      const allSearchTerms = Array.from(new Set([fullSearch, ...tokens]));
+
+      whereClause.OR = allSearchTerms.flatMap((term) => {
+        const clauses = [
+          { title: { contains: term } },
+          { description: { contains: term } },
+          { city: { contains: term } },
+          { district: { contains: term } },
+          { state: { contains: term } },
+          { neighborhood: { contains: term } },
+          { location: { contains: term } },
+        ];
+        if (VALID_CATEGORIES.includes(term.toLowerCase())) {
+          clauses.push({ category: term.toLowerCase() });
+        }
+        return clauses;
+      });
     }
 
     if (category && typeof category === 'string' && category.trim() && category.trim() !== 'all') {
