@@ -86,10 +86,21 @@ async function verifyRouting() {
     }, { Authorization: `Bearer ${userToken}` });
     eventId = eRes.body.id;
 
-    // 3. Register for event
+    // 3. Create Attendee User & register for event
+    const attendeeSignup = await makeRequest('POST', '/api/auth/signup', {
+      name: 'Attendee User',
+      email: `attendee_routing_${Date.now()}@example.com`,
+      password: 'Password123!',
+      country: 'India',
+      state: 'Karnataka',
+      district: 'Bengaluru Urban',
+      city: 'Bengaluru',
+    });
+    const attendeeToken = attendeeSignup.body.token;
+
     await makeRequest('POST', `/api/events/${eventId}/rsvp`, {
       ticket_quantity: 2,
-    }, { Authorization: `Bearer ${userToken}` });
+    }, { Authorization: `Bearer ${attendeeToken}` });
 
     // 4. Test My Events Route endpoint GET /api/events/my-events
     const myEventsRes = await makeRequest('GET', '/api/events/my-events', null, { Authorization: `Bearer ${userToken}` });
@@ -100,7 +111,7 @@ async function verifyRouting() {
     console.log('✅ TEST 1 PASSED: /my-events page route endpoint returned user created events correctly');
 
     // 5. Test My Bookings Route endpoint GET /api/events/my-bookings
-    const myBookingsRes = await makeRequest('GET', '/api/events/my-bookings', null, { Authorization: `Bearer ${userToken}` });
+    const myBookingsRes = await makeRequest('GET', '/api/events/my-bookings', null, { Authorization: `Bearer ${attendeeToken}` });
     if (myBookingsRes.status !== 200 || !myBookingsRes.body.bookings || myBookingsRes.body.bookings.length === 0) {
       console.error('❌ TEST 2 FAILED: GET /api/events/my-bookings failed for /my-bookings page route:', myBookingsRes.body);
       process.exit(1);

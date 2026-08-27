@@ -60,7 +60,15 @@ async function verifyModules4And5() {
   try {
     // Setup test user
     const email = `worker_rsvp_${Date.now()}@example.com`;
-    const userRes = await makeRequest('POST', '/api/auth/signup', { name: 'Worker User', email, password: 'Password123!' });
+    const userRes = await makeRequest('POST', '/api/auth/signup', {
+      name: 'Worker User',
+      email,
+      password: 'Password123!',
+      country: 'India',
+      state: 'Karnataka',
+      district: 'Bengaluru Urban',
+      city: 'Bengaluru',
+    });
     testUser = userRes.body.user;
     testUserToken = userRes.body.token;
 
@@ -114,7 +122,7 @@ async function verifyModules4And5() {
 
     // 1. Invalid Event ID returns 404 Not Found
     console.log('Testing RSVP on non-existent event ID...');
-    const invalidRsvpRes = await makeRequest('POST', `/api/events/non-existent-id-12345/rsvp`);
+    const invalidRsvpRes = await makeRequest('POST', `/api/events/non-existent-id-12345/rsvp`, null, { Authorization: `Bearer ${testUserToken}` });
     if (invalidRsvpRes.status !== 404) {
       throw new Error(`Expected 404 for invalid event ID RSVP, got ${invalidRsvpRes.status}`);
     }
@@ -122,7 +130,7 @@ async function verifyModules4And5() {
 
     // 2. RSVP on expired event returns 404 Not Found
     console.log('Testing RSVP on expired event...');
-    const expiredRsvpRes = await makeRequest('POST', `/api/events/${pastEventId}/rsvp`);
+    const expiredRsvpRes = await makeRequest('POST', `/api/events/${pastEventId}/rsvp`, null, { Authorization: `Bearer ${testUserToken}` });
     if (expiredRsvpRes.status !== 404) {
       throw new Error(`Expected 404 for expired event RSVP, got ${expiredRsvpRes.status}`);
     }
@@ -136,15 +144,30 @@ async function verifyModules4And5() {
       category: 'music',
       location: 'Stadium',
       neighborhood: 'Downtown',
-      event_datetime: new Date(Date.now() + 86400000).toISOString(), // 1 day in future
+      country: 'India',
+      state: 'Karnataka',
+      district: 'Bengaluru Urban',
+      city: 'Bengaluru',
+      event_datetime: new Date(Date.now() + 86400000).toISOString(),
     }, { Authorization: `Bearer ${testUserToken}` });
 
     const activeEventId = activeEventRes.body.id;
 
-    // Fire 20 concurrent POST requests
+    // Fire 20 concurrent POST requests from 20 distinct attendee users
     const rsvpPromises = [];
     for (let i = 0; i < 20; i++) {
-      rsvpPromises.push(makeRequest('POST', `/api/events/${activeEventId}/rsvp`));
+      rsvpPromises.push((async () => {
+        const u = await makeRequest('POST', '/api/auth/signup', {
+          name: `Concurrent User ${i}`,
+          email: `concurrent_${i}_${Date.now()}@example.com`,
+          password: 'Password123!',
+          country: 'India',
+          state: 'Karnataka',
+          district: 'Bengaluru Urban',
+          city: 'Bengaluru',
+        });
+        return makeRequest('POST', `/api/events/${activeEventId}/rsvp`, {}, { Authorization: `Bearer ${u.body.token}` });
+      })());
     }
 
     const rsvpResults = await Promise.all(rsvpPromises);
