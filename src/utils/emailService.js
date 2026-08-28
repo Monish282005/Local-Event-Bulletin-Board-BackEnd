@@ -88,11 +88,11 @@ async function sendTicketConfirmationEmail(bookingDetails) {
 
   const formattedBookedDate = bookingDetails.bookedAt
     ? new Date(bookingDetails.bookedAt).toLocaleDateString('en-US', {
-        weekday: 'short',
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-      })
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
     : new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
   const formattedTicketPrice = unitPrice > 0 ? `₹${unitPrice.toFixed(2)}` : 'FREE';

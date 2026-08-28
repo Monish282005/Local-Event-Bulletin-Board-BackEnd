@@ -13,6 +13,23 @@ const prisma = new PrismaClient();
 
 const VALID_CATEGORIES = ['sports', 'music', 'food', 'yard_sale', 'other'];
 
+const DEFAULT_CATEGORY_IMAGES = {
+  sports: 'https://res.cloudinary.com/evrmjfy2/image/upload/v1787907059/Sport.jpg',
+  music: 'https://res.cloudinary.com/evrmjfy2/image/upload/v1787906417/Music.jpg',
+  food: 'https://res.cloudinary.com/evrmjfy2/image/upload/v1787906475/Food.jpg',
+  yard_sale: 'https://res.cloudinary.com/evrmjfy2/image/upload/v1787906982/Yard.jpg',
+  other: 'https://res.cloudinary.com/evrmjfy2/image/upload/v1787906587/Other.jpg',
+};
+
+function getCategoryDefaultImage(category) {
+  const cat = (category || '').toLowerCase().trim();
+  if (cat === 'sports' || cat === 'sport') return DEFAULT_CATEGORY_IMAGES.sports;
+  if (cat === 'music') return DEFAULT_CATEGORY_IMAGES.music;
+  if (cat === 'food' || cat === 'food & drink') return DEFAULT_CATEGORY_IMAGES.food;
+  if (cat === 'yard_sale' || cat === 'yard' || cat === 'yard sale') return DEFAULT_CATEGORY_IMAGES.yard_sale;
+  return DEFAULT_CATEGORY_IMAGES.other;
+}
+
 function isValidFutureDate(dateStr) {
   const d = new Date(dateStr);
   return !isNaN(d.getTime()) && d.getTime() > Date.now();
@@ -138,6 +155,10 @@ router.post('/', authenticate, async (req, res) => {
       }
     }
 
+    if (!imageUrlStr) {
+      imageUrlStr = getCategoryDefaultImage(category);
+    }
+
     const newEvent = await prisma.event.create({
       data: {
         id: uuidv4(),
@@ -185,15 +206,15 @@ router.get('/my-events', authenticate, async (req, res) => {
       deleted_at: null,
       ...(isArchived
         ? {
-            OR: [
-              { is_expired: true },
-              { event_datetime: { lte: now } }
-            ]
-          }
+          OR: [
+            { is_expired: true },
+            { event_datetime: { lte: now } }
+          ]
+        }
         : {
-            is_expired: false,
-            event_datetime: { gt: now }
-          }
+          is_expired: false,
+          event_datetime: { gt: now }
+        }
       )
     };
 
@@ -1037,9 +1058,11 @@ router.post('/:id/rsvp', authenticate, async (req, res) => {
 });
 
 // DELETE /api/events/:id/rsvp (SOFT DELETE user booking & restore seat count - Auth required)
+// Supports partial cancellation via req.body.quantity or req.query.quantity
 router.delete('/:id/rsvp', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
+    const requestedCancelQty = req.body?.quantity || req.query?.quantity;
 
     const existingEvent = await prisma.event.findFirst({
       where: { id, deleted_at: null },
@@ -1062,17 +1085,30 @@ router.delete('/:id/rsvp', authenticate, async (req, res) => {
         user_id: req.user.id,
         deleted_at: null,
       },
+      orderBy: {
+        created_at: 'desc',
+      },
     });
 
     if (!userRegistrations || userRegistrations.length === 0) {
       return res.status(404).json({ error: 'No active booking found for this event.' });
     }
 
-    const canceledQty = userRegistrations.length;
-    const registrationIds = userRegistrations.map((r) => r.id);
+    const totalActiveQty = userRegistrations.length;
+    let canceledQty = totalActiveQty;
+
+    if (requestedCancelQty) {
+      const parsedQty = parseInt(requestedCancelQty, 10);
+      if (!isNaN(parsedQty) && parsedQty > 0) {
+        canceledQty = Math.min(totalActiveQty, parsedQty);
+      }
+    }
+
+    const targetRegistrations = userRegistrations.slice(0, canceledQty);
+    const registrationIds = targetRegistrations.map((r) => r.id);
     const now = new Date();
 
-    // Professional Soft Delete: Mark registrations with deleted_at timestamp
+    // Professional Soft Delete: Mark target registrations with deleted_at timestamp
     await prisma.eventRegistration.updateMany({
       where: { id: { in: registrationIds } },
       data: { deleted_at: now },
@@ -1090,10 +1126,17 @@ router.delete('/:id/rsvp', authenticate, async (req, res) => {
       },
     });
 
+    const remainingUserQty = Math.max(0, totalActiveQty - canceledQty);
+
+    const msg = remainingUserQty > 0
+      ? `Successfully cancelled ${canceledQty} ticket pass(es). ${remainingUserQty} ticket pass(es) remain reserved.`
+      : `Successfully cancelled all ${canceledQty} ticket pass(es). Capacity restored.`;
+
     return res.status(200).json({
       ...updatedEvent,
-      message: `Successfully cancelled ${canceledQty} ticket booking(s). Available capacity restored.`,
+      message: msg,
       canceled_tickets_count: canceledQty,
+      remaining_user_tickets: remainingUserQty,
     });
   } catch (error) {
     console.error('Error cancelling RSVP:', error);
