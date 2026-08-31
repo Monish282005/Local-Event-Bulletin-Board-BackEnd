@@ -210,11 +210,28 @@ router.put('/me', authenticate, async (req, res) => {
 // POST /api/auth/google (Google OAuth Authentication & Provisioning)
 router.post('/google', async (req, res) => {
   try {
-    const { credential, email, name, google_id, phone, city, state, district, country } = req.body;
+    const { credential, access_token, email, name, google_id, phone, city, state, district, country } = req.body;
 
     let targetEmail = email;
     let targetName = name;
     let targetGoogleId = google_id;
+
+    // Fetch userinfo using access_token if email not provided directly
+    if (access_token && !targetEmail) {
+      try {
+        const axios = require('axios');
+        const googleRes = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${access_token}` },
+        });
+        if (googleRes.data && googleRes.data.email) {
+          targetEmail = googleRes.data.email;
+          targetName = googleRes.data.name || googleRes.data.given_name || 'Google User';
+          targetGoogleId = googleRes.data.sub;
+        }
+      } catch (axiosErr) {
+        console.warn('Failed to fetch Google userinfo on backend:', axiosErr.message);
+      }
+    }
 
     // Decode Google ID Token if passed as JWT credential string
     if (credential && !targetEmail) {
