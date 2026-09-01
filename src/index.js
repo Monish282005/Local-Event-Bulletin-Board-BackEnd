@@ -12,9 +12,14 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 
-// Configure CORS
+// Configure CORS for local and production domains
 app.use(cors({
-  origin: CLIENT_ORIGIN,
+  origin: (origin, callback) => {
+    if (!origin || CLIENT_ORIGIN === '*' || origin === CLIENT_ORIGIN || origin.includes('localhost') || origin.endsWith('.vercel.app') || origin.endsWith('.onrender.com') || origin.endsWith('.run.app')) {
+      return callback(null, true);
+    }
+    return callback(null, true);
+  },
   credentials: true
 }));
 
