@@ -1,0 +1,31 @@
+# Dependencies & Logs
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Development Scripts & Test Files
+src/scripts/
+src/tests/
+tests/
+*.test.js
+*.spec.js
+
+# Environment & Config Files
+.env
+.env.*
+
+# Prisma Migrations (Schema is preserved in schema.prisma)
+prisma/migrations/
+
+# Version Control & IDE Files
+.git
+.gitignore
+.vscode
+.idea
+
+# Documentation & Temporary Files
+README.md
+scratch/
+tmp/
