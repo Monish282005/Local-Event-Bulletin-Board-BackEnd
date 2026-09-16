@@ -281,11 +281,19 @@ router.get('/my-bookings', authenticate, async (req, res) => {
       },
     });
 
+    const { status, page, limit } = req.query;
+    const now = new Date();
+
     // Group registrations by event_id
     const groupedMap = new Map();
 
     for (const reg of registrations) {
-      if (!reg.event || reg.event.is_expired || reg.event.deleted_at !== null) continue;
+      if (!reg.event || reg.event.deleted_at !== null) continue;
+
+      const isCompleted = Boolean(reg.event.is_expired || (reg.event.event_datetime && new Date(reg.event.event_datetime) <= now));
+
+      if (status === 'active' && isCompleted) continue;
+      if (status === 'archived' && !isCompleted) continue;
 
       const eventId = reg.event.id;
       if (!groupedMap.has(eventId)) {
@@ -309,7 +317,6 @@ router.get('/my-bookings', authenticate, async (req, res) => {
       if (!item.order_id && reg.order_id) item.order_id = reg.order_id;
     }
 
-    const { page, limit } = req.query;
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10) || 6));
     const skip = (pageNum - 1) * limitNum;
