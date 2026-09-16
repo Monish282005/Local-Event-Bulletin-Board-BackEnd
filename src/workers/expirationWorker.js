@@ -22,18 +22,8 @@ async function runExpirationWorker() {
 
     const expiredIds = expiredEvents.map(e => e.id);
 
-    // Soft delete associated registrations first
-    await prisma.eventRegistration.updateMany({
-      where: {
-        event_id: { in: expiredIds },
-        deleted_at: null,
-      },
-      data: {
-        deleted_at: now,
-      },
-    });
+    // Mark completed past events as expired (is_expired: true) for archiving (preserve registrations for user history)
 
-    // Mark completed past events as expired (is_expired: true) for archiving
     const updateResult = await prisma.event.updateMany({
       where: {
         id: { in: expiredIds },
